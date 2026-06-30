@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ecofleet Map</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.31/"></script>
+  <style>
+    html, body, #viewDiv { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    #loading {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; background: #1a1a1a; z-index: 999; font-family: system-ui, sans-serif;
+      color: #94a3b8; font-size: 14px;
+    }
+    .spinner {
+      width: 32px; height: 32px; border: 3px solid #334155; border-top-color: #38bdf8;
+      border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="viewDiv">
+    <div id="loading"><div class="spinner"></div>Loading satellite imagery…</div>
+  </div>
+  <script>
+    var view, routeLayer, stopLayer, vehicleLayer;
+    var params = new URLSearchParams(window.location.search);
+    var arcgisToken = params.get('token');
+    var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
+
+    function initMap() {
+      require([
+        'esri/Map',
+        'esri/views/MapView',
+        'esri/layers/GraphicsLayer',
+        'esri/config',
+        'esri/identity/IdentityManager'
+      ], function(Map, MapView, GraphicsLayer, esriConfig, identityManager) {
+
+        esriConfig.portalUrl = portalUrl;
+
+        if (arcgisToken) {
+          esriConfig.apiKey = arcgisToken;
+          try {
+            identityManager.registerToken({
+              server: portalUrl.replace(/\/$/, '') + '/sharing/rest',
+              token: arcgisToken,
+              expires: Date.now() + 7200000,
+              ssl: true
+            });
+          } catch (e) {}
+          try {
+            identityManager.registerToken({
+              server: 'https://www.arcgis.com/sharing/rest',
+              token: arcgisToken,
+              expires: Date.now() + 7200000,
+              ssl: true
+            });
+          } catch (e) {}
+        }
+
+        routeLayer = new GraphicsLayer();
+        stopLayer = new GraphicsLayer();
+        vehicleLayer = new GraphicsLayer();
+
+        // Pure satellite imagery — Earthstar / World Imagery (matches Esri Rwanda apps)
+        var map = new Map({ basemap: 'satellite' });
+        map.addMany([routeLayer, stopLayer, vehicleLayer]);
+
+        view = new MapView({
+          container: 'viewDiv',
+          map: map,
+          center: [30.088, -1.946],
+          zoom: 15,
+          constraints: { minZoom: 8, maxZoom: 19 },
+          ui: { components: ['zoom', 'compass', 'home', 'attribution'] }
+        });
+
+        view.when(function() {
+          document.getElementById('loading').style.display = 'none';
+          window.parent.postMessage({ type: 'mapReady' }, '*');
+        }).catch(function(err) {
+          document.getElementById('loading').innerHTML =
+            '<p>Map error: ' + (err.message || err) + '</p>';
+        });
+
+        view.on('click', function(event) {
+          view.hitTest(event, { include: [vehicleLayer] }).then(function(res) {
+            var hit = res.results.find(function(r) {
+              return r.graphic && r.graphic.layer === vehicleLayer;
+            });
+            if (hit && hit.graphic.attributes && hit.graphic.attributes.tripId) {
+              window.parent.postMessage({ type: 'vehicleClick', tripId: hit.graphic.attributes.tripId }, '*');
+            }
+          });
+        });
+      });
+    }
+
+    function drawRoute(data) {
+      if (!routeLayer || !view) return;
+      require([
+        'esri/Graphic', 'esri/geometry/Point', 'esri/geometry/Polyline',
+        'esri/geometry/Extent', 'esri/symbols/SimpleMarkerSymbol',
+        'esri/symbols/SimpleLineSymbol', 'esri/symbols/TextSymbol'
+      ], function(Graphic, Point, Polyline, Extent, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol) {
+
+        routeLayer.removeAll();
+        stopLayer.removeAll();
+
+        var polyline = data.polyline;
+        var stops = data.stops || [];
+
+        if (polyline && polyline.length >= 2) {
+          var line = new Polyline({ paths: [polyline] });
+          routeLayer.add(new Graphic({
+            geometry: line,
+            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 9, cap: 'round', join: 'round' })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: line,
+            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 6, cap: 'round', join: 'round' })
+          }));
+
+          var lngs = polyline.map(function(c) { return c[0]; });
+          var lats = polyline.map(function(c) { return c[1]; });
+          view.goTo(new Extent({
+            xmin: Math.min.apply(null, lngs) - 0.008,
+            ymin: Math.min.apply(null, lats) - 0.008,
+            xmax: Math.max.apply(null, lngs) + 0.008,
+            ymax: Math.max.apply(null, lats) + 0.008
+          }), { duration: 800 });
+        }
+
+        stops.forEach(function(stop, i) {
+          var pt = new Point({ longitude: stop.longitude, latitude: stop.latitude });
+          var isOrigin = i === 0;
+          var isDest = i === stops.length - 1;
+          stopLayer.add(new Graphic({
+            geometry: pt,
+            symbol: new SimpleMarkerSymbol({
+              style: isOrigin || isDest ? 'square' : 'circle',
+              color: isOrigin ? '#38BDF8' : isDest ? '#F87171' : '#F59E0B',
+              size: isOrigin || isDest ? 14 : 12,
+              outline: { color: '#fff', width: 2 }
+            })
+          }));
+          stopLayer.add(new Graphic({
+            geometry: pt,
+            symbol: new TextSymbol({
+              text: (i + 1) + '. ' + stop.name,
+              color: '#fff', haloColor: '#134E4A', haloSize: 2, yoffset: 18,
+              font: { size: 10, weight: 'bold' }
+            })
+          }));
+        });
+      });
+    }
+
+    function drawVehicles(tracking) {
+      if (!vehicleLayer) return;
+      require(['esri/Graphic', 'esri/geometry/Point', 'esri/symbols/SimpleMarkerSymbol', 'esri/symbols/TextSymbol'],
+        function(Graphic, Point, SimpleMarkerSymbol, TextSymbol) {
+        vehicleLayer.removeAll();
+        (tracking || []).forEach(function(t) {
+          var pt = new Point({ longitude: t.longitude, latitude: t.latitude });
+          vehicleLayer.add(new Graphic({
+            geometry: pt,
+            symbol: new SimpleMarkerSymbol({
+              style: 'triangle',
+              color: t.gps_connected ? '#34D399' : '#F87171',
+              size: 20, outline: { color: '#fff', width: 2 }, angle: t.heading || 0
+            }),
+            attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
+          }));
+          vehicleLayer.add(new Graphic({
+            geometry: pt,
+            symbol: new TextSymbol({
+              text: t.vehicle_plate, color: '#fff', haloColor: '#0F766E', haloSize: 2,
+              yoffset: -22, font: { size: 11, weight: 'bold' }
+            })
+          }));
+        });
+      });
+    }
+
+    window.addEventListener('message', function(event) {
+      var data = event.data;
+      if (!data || !data.type) return;
+      if (data.type === 'setRoute') drawRoute(data);
+      if (data.type === 'setTracking') drawVehicles(data.tracking);
+      if (data.type === 'setCenter' && view) {
+        view.goTo({ center: [data.longitude, data.latitude], zoom: data.zoom || 15 });
+      }
+    });
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+      initMap();
+    }
+  </script>
+</body>
+</html>
