@@ -8,6 +8,7 @@ interface FleetPanelProps {
 }
 
 function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
   const mins = Math.round(seconds / 60);
   if (mins < 60) return `${mins} min`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;

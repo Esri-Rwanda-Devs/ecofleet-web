@@ -11,7 +11,8 @@ function formatDistance(meters: number): string {
 
 function formatMinutes(seconds: number): string {
   if (seconds <= 0) return 'Arriving';
-  const mins = Math.max(1, Math.round(seconds / 60));
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
+  const mins = Math.round(seconds / 60);
   if (mins < 60) return mins === 1 ? '1 min' : `${mins} min`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
