@@ -1,4 +1,11 @@
-import type { ArcGisConfig, Route, BusStop, RouteCalculation, TripTrackingState } from '../types';
+import type {
+  ArcGisConfig,
+  Route,
+  BusStop,
+  RouteCalculation,
+  StationArrival,
+  TripTrackingState,
+} from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -64,6 +71,12 @@ class ApiClient {
 
   getVehicles() {
     return this.request<{ vehicles: unknown[] }>('/api/vehicles');
+  }
+
+  getStationArrivals(stopId: string) {
+    return this.request<StationArrival[]>(`/tracking/station/${stopId}/arrivals`).then(
+      (payload) => (Array.isArray(payload) ? payload : [])
+    );
   }
 }
 

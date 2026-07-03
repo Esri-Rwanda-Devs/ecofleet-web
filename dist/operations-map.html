@@ -7,53 +7,56 @@
   <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
   <script src="https://js.arcgis.com/4.31/"></script>
   <style>
-    html, body, #viewDiv { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    #viewDiv { position: fixed; inset: 0; }
     #loading {
-      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-      flex-direction: column; background: #1a1a1a; z-index: 999; font-family: system-ui, sans-serif;
-      color: #94a3b8; font-size: 14px;
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; background: #e5e3df; z-index: 999; pointer-events: none;
+      font-family: system-ui, sans-serif; color: #64748b; font-size: 14px;
     }
     .spinner {
-      width: 32px; height: 32px; border: 3px solid #334155; border-top-color: #38bdf8;
+      width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #2563eb;
       border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <div id="viewDiv">
-    <div id="loading"><div class="spinner"></div>Loading satellite imagery…</div>
-  </div>
+  <div id="loading"><div class="spinner"></div><span id="loadingText">Loading map…</span></div>
+  <div id="viewDiv"></div>
   <script>
-    var view, routeLayer, stopLayer, vehicleLayer;
+    var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
+    var highlightGraphic = null, highlightStopId = null;
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
+
+    function hideLoading() {
+      var el = document.getElementById('loading');
+      if (el) el.style.display = 'none';
+    }
+
+    function signalReady() {
+      if (mapReadySent) return;
+      mapReadySent = true;
+      hideLoading();
+      window.parent.postMessage({ type: 'mapReady', basemap: window.__basemapName || 'satellite' }, '*');
+    }
 
     function initMap() {
       require([
         'esri/Map',
         'esri/views/MapView',
         'esri/layers/GraphicsLayer',
-        'esri/config',
+        'esri/layers/OpenStreetMapLayer',
+        'esri/Basemap',
         'esri/identity/IdentityManager'
-      ], function(Map, MapView, GraphicsLayer, esriConfig, identityManager) {
-
-        esriConfig.portalUrl = portalUrl;
+      ], function(Map, MapView, GraphicsLayer, OpenStreetMapLayer, Basemap, identityManager) {
 
         if (arcgisToken) {
-          esriConfig.apiKey = arcgisToken;
           try {
             identityManager.registerToken({
               server: portalUrl.replace(/\/$/, '') + '/sharing/rest',
-              token: arcgisToken,
-              expires: Date.now() + 7200000,
-              ssl: true
-            });
-          } catch (e) {}
-          try {
-            identityManager.registerToken({
-              server: 'https://www.arcgis.com/sharing/rest',
               token: arcgisToken,
               expires: Date.now() + 7200000,
               ssl: true
@@ -65,9 +68,10 @@
         stopLayer = new GraphicsLayer();
         vehicleLayer = new GraphicsLayer();
 
-        // Pure satellite imagery — Earthstar / World Imagery (matches Esri Rwanda apps)
+        // Same pattern as working mobile WebView — satellite basemap, no custom UI widgets
         var map = new Map({ basemap: 'satellite' });
         map.addMany([routeLayer, stopLayer, vehicleLayer]);
+        window.__basemapName = 'satellite';
 
         view = new MapView({
           container: 'viewDiv',
@@ -75,26 +79,47 @@
           center: [30.088, -1.946],
           zoom: 15,
           constraints: { minZoom: 8, maxZoom: 19 },
-          ui: { components: ['zoom', 'compass', 'home', 'attribution'] }
-        });
-
-        view.when(function() {
-          document.getElementById('loading').style.display = 'none';
-          window.parent.postMessage({ type: 'mapReady' }, '*');
-        }).catch(function(err) {
-          document.getElementById('loading').innerHTML =
-            '<p>Map error: ' + (err.message || err) + '</p>';
+          ui: { components: [] }
         });
 
         view.on('click', function(event) {
-          view.hitTest(event, { include: [vehicleLayer] }).then(function(res) {
-            var hit = res.results.find(function(r) {
+          view.hitTest(event, { include: [vehicleLayer, stopLayer] }).then(function(res) {
+            var vehicleHit = res.results.find(function(r) {
               return r.graphic && r.graphic.layer === vehicleLayer;
             });
-            if (hit && hit.graphic.attributes && hit.graphic.attributes.tripId) {
-              window.parent.postMessage({ type: 'vehicleClick', tripId: hit.graphic.attributes.tripId }, '*');
+            if (vehicleHit && vehicleHit.graphic.attributes && vehicleHit.graphic.attributes.tripId) {
+              window.parent.postMessage({ type: 'vehicleClick', tripId: vehicleHit.graphic.attributes.tripId }, '*');
+              return;
+            }
+            var stopHit = res.results.find(function(r) {
+              return r.graphic && r.graphic.attributes && r.graphic.attributes.kind === 'stop';
+            });
+            if (stopHit) {
+              window.parent.postMessage({
+                type: 'stopClick',
+                stopId: stopHit.graphic.attributes.id,
+                name: stopHit.graphic.attributes.name
+              }, '*');
             }
           });
+        });
+
+        view.when(function() {
+          signalReady();
+        }).catch(function() {
+          // Fallback to OSM if satellite fails
+          try {
+            var osm = new OpenStreetMapLayer();
+            map.basemap = new Basemap({ baseLayers: [osm], title: 'OpenStreetMap' });
+            window.__basemapName = 'OpenStreetMap';
+            view.when(function() { signalReady(); }).catch(function(err) {
+              console.error('Map fallback failed:', err);
+              signalReady();
+            });
+          } catch (err) {
+            console.error('Map init failed:', err);
+            signalReady();
+          }
         });
       });
     }
@@ -138,8 +163,10 @@
           var pt = new Point({ longitude: stop.longitude, latitude: stop.latitude });
           var isOrigin = i === 0;
           var isDest = i === stops.length - 1;
+          var stopAttrs = { kind: 'stop', id: String(stop.id), name: stop.name };
           stopLayer.add(new Graphic({
             geometry: pt,
+            attributes: stopAttrs,
             symbol: new SimpleMarkerSymbol({
               style: isOrigin || isDest ? 'square' : 'circle',
               color: isOrigin ? '#38BDF8' : isDest ? '#F87171' : '#F59E0B',
@@ -149,6 +176,7 @@
           }));
           stopLayer.add(new Graphic({
             geometry: pt,
+            attributes: stopAttrs,
             symbol: new TextSymbol({
               text: (i + 1) + '. ' + stop.name,
               color: '#fff', haloColor: '#134E4A', haloSize: 2, yoffset: 18,
@@ -156,32 +184,143 @@
             })
           }));
         });
+
+        // Stops were recreated; rebuild the selection ring on the new graphics.
+        applyHighlight(highlightStopId);
       });
+    }
+
+    function applyHighlight(stopId) {
+      highlightStopId = stopId || null;
+      if (!stopLayer) return;
+      require(['esri/Graphic', 'esri/symbols/SimpleMarkerSymbol'], function(Graphic, SimpleMarkerSymbol) {
+        if (highlightGraphic) { stopLayer.remove(highlightGraphic); highlightGraphic = null; }
+        if (!highlightStopId) return;
+        var target = stopLayer.graphics.find(function(g) {
+          return g.attributes && g.attributes.kind === 'stop' && g.attributes.id === highlightStopId;
+        });
+        if (!target) return;
+        highlightGraphic = new Graphic({
+          geometry: target.geometry,
+          symbol: new SimpleMarkerSymbol({
+            style: 'circle',
+            size: 26,
+            color: [3, 105, 161, 0.15],
+            outline: { color: '#0369A1', width: 3 }
+          })
+        });
+        stopLayer.add(highlightGraphic);
+        if (view) {
+          view.goTo(
+            { center: target.geometry, zoom: Math.max(view.zoom, 17) },
+            { duration: 600 }
+          ).catch(function() {});
+        }
+      });
+    }
+
+    // Vehicles glide between position updates instead of jumping: each new
+    // position starts a ~4.5s tween (just under the 5s dashboard poll), so the
+    // marker arrives as the next update lands.
+    var vehicleMarkers = {}; // tripId -> { marker, label, lon, lat, hdg, connected, anim }
+    var VEHICLE_ANIM_MS = 4500;
+    var vehicleAnimRunning = false;
+
+    function vehicleSymbol(connected, heading) {
+      return {
+        type: 'simple-marker', style: 'triangle',
+        color: connected ? '#34D399' : '#F87171',
+        size: 20, outline: { color: '#fff', width: 2 }, angle: heading || 0
+      };
+    }
+
+    function vehicleLabelSymbol(plate) {
+      return {
+        type: 'text', text: plate, color: '#fff', haloColor: '#0F766E', haloSize: 2,
+        yoffset: -22, font: { size: 11, weight: 'bold' }
+      };
+    }
+
+    // Shortest-arc interpolation so the triangle turns 350°->10° through north,
+    // not the long way around.
+    function lerpHeading(a, b, p) {
+      var d = ((b - a + 540) % 360) - 180;
+      return (a + d * p + 360) % 360;
+    }
+
+    function vehicleAnimTick() {
+      var now = Date.now();
+      var any = false;
+      Object.keys(vehicleMarkers).forEach(function(id) {
+        var e = vehicleMarkers[id];
+        if (!e.anim) return;
+        var p = Math.min(1, (now - e.anim.start) / VEHICLE_ANIM_MS);
+        var lon = e.anim.fromLon + (e.anim.toLon - e.anim.fromLon) * p;
+        var lat = e.anim.fromLat + (e.anim.toLat - e.anim.fromLat) * p;
+        var hdg = lerpHeading(e.anim.fromHdg, e.anim.toHdg, p);
+        var geom = { type: 'point', longitude: lon, latitude: lat };
+        e.marker.geometry = geom;
+        e.marker.symbol = vehicleSymbol(e.connected, hdg);
+        e.label.geometry = geom;
+        e.lon = lon; e.lat = lat; e.hdg = hdg;
+        if (p < 1) any = true; else e.anim = null;
+      });
+      if (any) { requestAnimationFrame(vehicleAnimTick); } else { vehicleAnimRunning = false; }
     }
 
     function drawVehicles(tracking) {
       if (!vehicleLayer) return;
-      require(['esri/Graphic', 'esri/geometry/Point', 'esri/symbols/SimpleMarkerSymbol', 'esri/symbols/TextSymbol'],
-        function(Graphic, Point, SimpleMarkerSymbol, TextSymbol) {
-        vehicleLayer.removeAll();
+      require(['esri/Graphic'], function(Graphic) {
+        var seen = {};
         (tracking || []).forEach(function(t) {
-          var pt = new Point({ longitude: t.longitude, latitude: t.latitude });
-          vehicleLayer.add(new Graphic({
-            geometry: pt,
-            symbol: new SimpleMarkerSymbol({
-              style: 'triangle',
-              color: t.gps_connected ? '#34D399' : '#F87171',
-              size: 20, outline: { color: '#fff', width: 2 }, angle: t.heading || 0
-            }),
-            attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
-          }));
-          vehicleLayer.add(new Graphic({
-            geometry: pt,
-            symbol: new TextSymbol({
-              text: t.vehicle_plate, color: '#fff', haloColor: '#0F766E', haloSize: 2,
-              yoffset: -22, font: { size: 11, weight: 'bold' }
-            })
-          }));
+          seen[t.trip_id] = true;
+          var connected = !!t.gps_connected;
+          var e = vehicleMarkers[t.trip_id];
+          if (!e) {
+            var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
+            var marker = new Graphic({
+              geometry: geom,
+              symbol: vehicleSymbol(connected, t.heading || 0),
+              attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
+            });
+            var label = new Graphic({ geometry: geom, symbol: vehicleLabelSymbol(t.vehicle_plate) });
+            vehicleLayer.addMany([marker, label]);
+            vehicleMarkers[t.trip_id] = {
+              marker: marker, label: label,
+              lon: t.longitude, lat: t.latitude, hdg: t.heading || 0,
+              connected: connected, anim: null
+            };
+            return;
+          }
+          e.connected = connected;
+          // Teleports (trip restart, long GPS gap) snap instead of gliding
+          // across the city. ~0.01° ≈ 1km.
+          var far = Math.abs(t.longitude - e.lon) + Math.abs(t.latitude - e.lat) > 0.01;
+          if (far) {
+            var snapGeom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
+            e.marker.geometry = snapGeom;
+            e.marker.symbol = vehicleSymbol(connected, t.heading || 0);
+            e.label.geometry = snapGeom;
+            e.lon = t.longitude; e.lat = t.latitude; e.hdg = t.heading || 0;
+            e.anim = null;
+          } else {
+            e.anim = {
+              start: Date.now(),
+              fromLon: e.lon, fromLat: e.lat, fromHdg: e.hdg,
+              toLon: t.longitude, toLat: t.latitude, toHdg: t.heading || 0
+            };
+            if (!vehicleAnimRunning) {
+              vehicleAnimRunning = true;
+              requestAnimationFrame(vehicleAnimTick);
+            }
+          }
+        });
+        Object.keys(vehicleMarkers).forEach(function(id) {
+          if (!seen[id]) {
+            var e = vehicleMarkers[id];
+            vehicleLayer.removeMany([e.marker, e.label]);
+            delete vehicleMarkers[id];
+          }
         });
       });
     }
@@ -191,6 +330,7 @@
       if (!data || !data.type) return;
       if (data.type === 'setRoute') drawRoute(data);
       if (data.type === 'setTracking') drawVehicles(data.tracking);
+      if (data.type === 'setHighlightStop') applyHighlight(data.stopId);
       if (data.type === 'setCenter' && view) {
         view.goTo({ center: [data.longitude, data.latitude], zoom: data.zoom || 15 });
       }

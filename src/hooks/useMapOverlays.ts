@@ -9,7 +9,7 @@ import SimpleLineSymbol from '@arcgis/core/symbols/SimpleLineSymbol';
 import TextSymbol from '@arcgis/core/symbols/TextSymbol';
 import type MapView from '@arcgis/core/views/MapView';
 import type { BusStop, TripTrackingState } from '../types';
-import type { OperationsMapLayers } from '../hooks/useOperationsMap';
+import type { OperationsMapLayers } from './useOperationsMap';
 
 /** Draw live fleet vehicles on the graphics layer */
 export function useVehicleGraphics(

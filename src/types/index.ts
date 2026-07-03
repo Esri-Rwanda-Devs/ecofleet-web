@@ -45,6 +45,18 @@ export interface StopEta {
   segment_speed_kmh?: number;
 }
 
+/** One bus heading to a station, from GET /tracking/station/{stop_id}/arrivals. */
+export interface StationArrival {
+  trip_id: string;
+  plate_number: string;
+  route_name: string;
+  eta_seconds: number;
+  delay_minutes: number;
+  current_stop_sequence: number;
+  /** approaching | at_station | departed */
+  status: string;
+}
+
 export interface TripTrackingState {
   trip_id: string;
   driver_id: string;

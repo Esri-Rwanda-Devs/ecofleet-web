@@ -4,6 +4,7 @@ import { OperationsMap } from '../components/OperationsMap';
 import { FleetPanel } from '../components/FleetPanel';
 import { TripDetailPanel } from '../components/TripDetailPanel';
 import { RoutePlanner } from '../components/RoutePlanner';
+import { StopArrivalsCard } from '../components/StopArrivalsCard';
 import { BusIcon, FleetIcon, RouteIcon } from '../components/Icons';
 import { parseRoutePolyline } from '../utils/route-geometry';
 import { ArcGisConfig, BusStop, Route, RouteCalculation, TripTrackingState } from '../types';
@@ -44,6 +45,7 @@ export function DashboardPage() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [routeDisplay, setRouteDisplay] = useState<{ polyline?: number[][]; stops?: BusStop[] }>();
   const [activeTab, setActiveTab] = useState<'fleet' | 'routes'>('fleet');
+  const [selectedStop, setSelectedStop] = useState<{ id: string; name: string } | null>(null);
 
   const selectedTrip = tracking.find((t) => t.trip_id === selectedTripId) || null;
   const connectedCount = tracking.filter((t) => t.gps_connected).length;
@@ -78,6 +80,7 @@ export function DashboardPage() {
 
   const handleRouteCalculated = (result: RouteCalculation, stops: BusStop[]) => {
     const polyline = parseRoutePolyline(result.polyline) ?? undefined;
+    setSelectedStop(null);
     setRouteDisplay({ polyline, stops });
   };
 
@@ -182,6 +185,7 @@ export function DashboardPage() {
               routes={routes}
               onRouteCalculated={handleRouteCalculated}
               onRouteSelect={async (route) => {
+                setSelectedStop(null);
                 const display = await loadRouteForMap(route);
                 setRouteDisplay(display);
               }}
@@ -194,7 +198,12 @@ export function DashboardPage() {
             tracking={tracking}
             selectedRoute={routeDisplay}
             onVehicleClick={setSelectedTripId}
+            onStopClick={setSelectedStop}
+            highlightStopId={selectedStop?.id ?? null}
           />
+          {selectedStop && (
+            <StopArrivalsCard stop={selectedStop} onClose={() => setSelectedStop(null)} />
+          )}
         </main>
       </div>
     </div>

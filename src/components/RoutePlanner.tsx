@@ -99,27 +99,31 @@ export function RoutePlanner({ routes, onRouteCalculated, onRouteSelect }: Route
             </div>
           </div>
 
-          <h3>Segment Analytics</h3>
-          <table className="segment-table">
-            <thead>
-              <tr>
-                <th>Segment</th>
-                <th>Distance</th>
-                <th>Time</th>
-                <th>ETA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.segment_analytics.map((seg, i) => (
-                <tr key={i}>
-                  <td>{seg.from} → {seg.to}</td>
-                  <td>{(seg.distance_meters / 1000).toFixed(2)} km</td>
-                  <td>{Math.round(seg.duration_seconds / 60)} min</td>
-                  <td>{new Date(seg.eta).toLocaleTimeString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {result.segment_analytics.length > 0 && (
+            <>
+              <h3>Segment Analytics</h3>
+              <table className="segment-table">
+                <thead>
+                  <tr>
+                    <th>Segment</th>
+                    <th>Distance</th>
+                    <th>Time</th>
+                    <th>ETA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.segment_analytics.map((seg, i) => (
+                    <tr key={i}>
+                      <td>{seg.from} → {seg.to}</td>
+                      <td>{(seg.distance_meters / 1000).toFixed(2)} km</td>
+                      <td>{Math.round(seg.duration_seconds / 60)} min</td>
+                      <td>{new Date(seg.eta).toLocaleTimeString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
 
           {directions.length > 0 && (
             <>

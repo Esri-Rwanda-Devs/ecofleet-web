@@ -21,12 +21,23 @@ interface OperationsMapProps {
     arcgisObjectId?: number;
   };
   onVehicleClick?: (tripId: string) => void;
+  /** Fired when the user clicks a stop marker on the map. */
+  onStopClick?: (stop: { id: string; name: string }) => void;
+  /** Stop id to draw a selection ring around; null clears it. */
+  highlightStopId?: string | null;
 }
 
 /**
  * Esri satellite imagery map (CDN iframe — same as mobile WebView pattern).
  */
-export function OperationsMap({ config, tracking, selectedRoute, onVehicleClick }: OperationsMapProps) {
+export function OperationsMap({
+  config,
+  tracking,
+  selectedRoute,
+  onVehicleClick,
+  onStopClick,
+  highlightStopId,
+}: OperationsMapProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [mapReady, setMapReady] = useState(false);
   const mapSrc = useMemo(() => buildMapUrl(config), [config.portalUrl, config.arcgisToken]);
@@ -52,6 +63,11 @@ export function OperationsMap({ config, tracking, selectedRoute, onVehicleClick 
       if (event.data?.type === 'vehicleClick' && onVehicleClick) {
         onVehicleClick(event.data.tripId);
       }
+      if (event.data?.type === 'stopClick' && onStopClick) {
+        if (typeof event.data.stopId === 'string' && typeof event.data.name === 'string') {
+          onStopClick({ id: event.data.stopId, name: event.data.name });
+        }
+      }
     };
     window.addEventListener('message', onMessage);
 
@@ -62,7 +78,7 @@ export function OperationsMap({ config, tracking, selectedRoute, onVehicleClick 
       window.removeEventListener('message', onMessage);
       clearTimeout(fallback);
     };
-  }, [config.center.longitude, config.center.latitude, onVehicleClick]);
+  }, [config.center.longitude, config.center.latitude, onVehicleClick, onStopClick]);
 
   useEffect(() => {
     if (!mapReady || !iframeRef.current?.contentWindow) return;
@@ -80,6 +96,14 @@ export function OperationsMap({ config, tracking, selectedRoute, onVehicleClick 
     if (!mapReady || !iframeRef.current?.contentWindow) return;
     iframeRef.current.contentWindow.postMessage({ type: 'setTracking', tracking }, '*');
   }, [mapReady, tracking]);
+
+  useEffect(() => {
+    if (!mapReady || !iframeRef.current?.contentWindow) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'setHighlightStop', stopId: highlightStopId ?? null },
+      '*'
+    );
+  }, [mapReady, highlightStopId]);
 
   return (
     <div className="map-wrapper">
