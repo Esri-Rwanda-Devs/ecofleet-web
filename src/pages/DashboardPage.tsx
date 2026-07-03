@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 import { OperationsMap } from '../components/OperationsMap';
 import { FleetPanel } from '../components/FleetPanel';
