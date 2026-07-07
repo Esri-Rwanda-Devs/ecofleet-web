@@ -1,3 +1,10 @@
+/** True when polyline is only stop-to-stop vertices (not road-network geometry). */
+export function isSparseRoutePolyline(polyline: number[][], stopCount: number): boolean {
+  if (polyline.length < 2) return true;
+  // ArcGIS route geometry typically has many more vertices than bus stops.
+  return polyline.length <= Math.max(stopCount, 3);
+}
+
 /** Parse stored polyline, GeoJSON, or ArcGIS paths into [lng, lat][] coordinates */
 export function parseRoutePolyline(
   polyline?: string | { type?: string; coordinates?: number[][] } | number[][][] | number[][]

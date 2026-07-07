@@ -6,7 +6,7 @@ import { TripDetailPanel } from '../components/TripDetailPanel';
 import { RoutePlanner } from '../components/RoutePlanner';
 import { StopArrivalsCard } from '../components/StopArrivalsCard';
 import { BusIcon, FleetIcon, RouteIcon } from '../components/Icons';
-import { parseRoutePolyline } from '../utils/route-geometry';
+import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geometry';
 import { ArcGisConfig, BusStop, Route, RouteCalculation, TripTrackingState } from '../types';
 
 const POLL_MS = 5000;
@@ -14,26 +14,38 @@ const POLL_MS = 5000;
 async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; stops: BusStop[] }> {
   const { route: detail, stops } = await api.getRoute(route.id);
 
-  let polyline = parseRoutePolyline(detail.route_polyline as Parameters<typeof parseRoutePolyline>[0]);
+  const storedPolyline = parseRoutePolyline(
+    detail.route_polyline as Parameters<typeof parseRoutePolyline>[0]
+  );
+  const stopFallback = stops.map((s) => [s.longitude, s.latitude]);
 
-  if (!polyline || polyline.length < 2) {
+  const routeRequest = {
+    origin_longitude: detail.origin_longitude,
+    origin_latitude: detail.origin_latitude,
+    destination_longitude: detail.destination_longitude,
+    destination_latitude: detail.destination_latitude,
+    waypoints: stops.slice(1, -1).map((s) => ({
+      longitude: s.longitude,
+      latitude: s.latitude,
+      name: s.name,
+    })),
+  };
+
+  // Prefer ArcGIS road geometry — stored polylines are often only stop coordinates.
+  if (!storedPolyline || isSparseRoutePolyline(storedPolyline, stops.length)) {
     try {
-      const calc = await api.calculateRoute({
-        origin_longitude: detail.origin_longitude,
-        origin_latitude: detail.origin_latitude,
-        destination_longitude: detail.destination_longitude,
-        destination_latitude: detail.destination_latitude,
-        waypoints: stops.slice(1, -1).map((s) => ({
-          longitude: s.longitude,
-          latitude: s.latitude,
-          name: s.name,
-        })),
-      });
-      polyline = parseRoutePolyline(calc.polyline);
+      const calc = await api.calculateRoute(routeRequest);
+      const roadPolyline = parseRoutePolyline(calc.polyline);
+      if (roadPolyline && roadPolyline.length >= 2) {
+        return { polyline: roadPolyline, stops };
+      }
     } catch {
-      polyline = stops.map((s) => [s.longitude, s.latitude]);
+      /* fall through to stored / stop vertices */
     }
   }
+
+  const polyline =
+    storedPolyline && storedPolyline.length >= 2 ? storedPolyline : stopFallback;
 
   return { polyline, stops };
 }
