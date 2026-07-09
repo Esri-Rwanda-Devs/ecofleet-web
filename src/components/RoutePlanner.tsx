@@ -9,6 +9,20 @@ interface RoutePlannerProps {
   onRouteSelect?: (route: Route) => void;
 }
 
+/**
+ * The Esri solve sometimes reports travel time in the wrong unit (the route
+ * service's cost-attribute metadata is misread upstream, e.g. seconds labelled
+ * as minutes), producing absurd durations. If the implied speed falls outside
+ * plausible bus speeds, estimate from distance at a 25 km/h city average.
+ */
+function plausibleDurationSeconds(distanceMeters: number, durationSeconds: number): number {
+  if (distanceMeters > 0 && durationSeconds > 0) {
+    const impliedKmh = distanceMeters / 1000 / (durationSeconds / 3600);
+    if (impliedKmh >= 3 && impliedKmh <= 120) return durationSeconds;
+  }
+  return Math.round((distanceMeters / 1000 / 25) * 3600);
+}
+
 export function RoutePlanner({ routes, onRouteCalculated, onRouteSelect }: RoutePlannerProps) {
   const [selectedRouteId, setSelectedRouteId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -91,11 +105,28 @@ export function RoutePlanner({ routes, onRouteCalculated, onRouteSelect }: Route
             </div>
             <div className="summary-card">
               <label>Travel Time</label>
-              <span>{Math.round(result.summary.total_duration_seconds / 60)} min</span>
+              <span>
+                {Math.round(
+                  plausibleDurationSeconds(
+                    result.summary.total_distance_meters,
+                    result.summary.total_duration_seconds
+                  ) / 60
+                )}{' '}
+                min
+              </span>
             </div>
             <div className="summary-card">
               <label>ETA</label>
-              <span>{new Date(result.summary.estimated_arrival).toLocaleTimeString()}</span>
+              <span>
+                {new Date(
+                  Date.now() +
+                    plausibleDurationSeconds(
+                      result.summary.total_distance_meters,
+                      result.summary.total_duration_seconds
+                    ) *
+                      1000
+                ).toLocaleTimeString()}
+              </span>
             </div>
           </div>
 
@@ -116,7 +147,12 @@ export function RoutePlanner({ routes, onRouteCalculated, onRouteSelect }: Route
                     <tr key={i}>
                       <td>{seg.from} → {seg.to}</td>
                       <td>{(seg.distance_meters / 1000).toFixed(2)} km</td>
-                      <td>{Math.round(seg.duration_seconds / 60)} min</td>
+                      <td>
+                        {Math.round(
+                          plausibleDurationSeconds(seg.distance_meters, seg.duration_seconds) / 60
+                        )}{' '}
+                        min
+                      </td>
                       <td>{new Date(seg.eta).toLocaleTimeString()}</td>
                     </tr>
                   ))}
@@ -133,7 +169,8 @@ export function RoutePlanner({ routes, onRouteCalculated, onRouteSelect }: Route
                   <li key={i}>
                     {d.text}
                     <span className="dir-meta">
-                      {(d.length / 1000).toFixed(2)} km · {Math.round(d.time / 60)} min
+                      {(d.length / 1000).toFixed(2)} km ·{' '}
+                      {Math.round(plausibleDurationSeconds(d.length, d.time) / 60)} min
                     </span>
                   </li>
                 ))}

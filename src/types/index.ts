@@ -37,6 +37,8 @@ export interface StopEta {
   stop_name: string;
   sequence_order: number;
   eta: string;
+  /** How late (+) / early (−) the bus will be at this stop vs the plan. */
+  delay_seconds?: number;
   remaining_distance_meters: number;
   remaining_duration_seconds: number;
   leg_distance_meters?: number;
@@ -69,6 +71,8 @@ export interface TripTrackingState {
   speed_kmh: number;
   heading: number;
   current_stop_index: number;
+  /** False while the bus is deadheading (hasn't reached the origin stop). */
+  in_service?: boolean;
   current_stop_name?: string;
   next_stop_name?: string;
   remaining_distance_meters: number;

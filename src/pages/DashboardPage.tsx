@@ -1,5 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../services/api';
+import {
+  correctTrackingForOrigin,
+  updateVisitedStops,
+} from '../utils/tracking-corrections';
 import { OperationsMap } from '../components/OperationsMap';
 import { FleetPanel } from '../components/FleetPanel';
 import { TripDetailPanel } from '../components/TripDetailPanel';
@@ -60,24 +64,70 @@ export function DashboardPage() {
   const [selectedStop, setSelectedStop] = useState<{ id: string; name: string } | null>(null);
 
   const selectedTrip = tracking.find((t) => t.trip_id === selectedTripId) || null;
-  const connectedCount = tracking.filter((t) => t.gps_connected).length;
   const delayedCount = tracking.filter((t) => t.is_delayed).length;
+
+  // Client-side arrival truth (mirrors the mobile app): stops each bus has
+  // genuinely been near, plus cached stop lists per route name.
+  const routesRef = useRef<Route[]>([]);
+  const routeStopsRef = useRef<Map<string, BusStop[]>>(new Map());
+  const visitedRef = useRef<Map<string, Set<string>>>(new Map());
+
+  const stopsForRouteName = useCallback(async (routeName: string) => {
+    const cached = routeStopsRef.current.get(routeName);
+    if (cached) return cached;
+    const route = routesRef.current.find((r) => r.name === routeName);
+    if (!route) return undefined;
+    try {
+      const { stops } = await api.getRoute(route.id);
+      routeStopsRef.current.set(routeName, stops);
+      return stops;
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  const applyCorrections = useCallback(
+    async (list: TripTrackingState[]) => {
+      const activeIds = new Set<string>();
+      const corrected = await Promise.all(
+        list.map(async (t) => {
+          activeIds.add(t.trip_id);
+          const stops = await stopsForRouteName(t.route_name);
+          if (!stops) return t;
+          let visited = visitedRef.current.get(t.trip_id);
+          if (!visited) {
+            visited = new Set();
+            visitedRef.current.set(t.trip_id, visited);
+          }
+          updateVisitedStops(t, stops, visited);
+          return correctTrackingForOrigin(t, stops, visited);
+        })
+      );
+      // Drop visit history of trips that are no longer active.
+      for (const id of [...visitedRef.current.keys()]) {
+        if (!activeIds.has(id)) visitedRef.current.delete(id);
+      }
+      return corrected;
+    },
+    [stopsForRouteName]
+  );
 
   const refreshTracking = useCallback(async () => {
     try {
       const data = await api.getActiveTracking();
-      setTracking(data.tracking);
+      setTracking(await applyCorrections(data.tracking));
     } catch {
       /* backend may be starting */
     }
-  }, []);
+  }, [applyCorrections]);
 
   useEffect(() => {
     Promise.all([api.getArcGisConfig(), api.getActiveTracking(), api.getRoutes()])
       .then(async ([arcgisConfig, trackingData, routesData]) => {
         setConfig(arcgisConfig);
-        setTracking(trackingData.tracking);
+        routesRef.current = routesData.routes;
         setRoutes(routesData.routes);
+        setTracking(await applyCorrections(trackingData.tracking));
 
         if (routesData.routes.length > 0) {
           const display = await loadRouteForMap(routesData.routes[0]);
@@ -88,7 +138,7 @@ export function DashboardPage() {
 
     const interval = setInterval(refreshTracking, POLL_MS);
     return () => clearInterval(interval);
-  }, [refreshTracking]);
+  }, [refreshTracking, applyCorrections]);
 
   const handleRouteCalculated = (result: RouteCalculation, stops: BusStop[]) => {
     const polyline = parseRoutePolyline(result.polyline) ?? undefined;
@@ -114,13 +164,7 @@ export function DashboardPage() {
           </div>
           <div>
             <h1>BTS Operations</h1>
-            <span>Bus Transport Services · Kigali, Rwanda · Satellite Imagery</span>
-          </div>
-        </div>
-        <div className="header-actions">
-          <div className="live-indicator">
-            <span className="live-dot" />
-            Live · updates every {POLL_MS / 1000}s
+            <span>Bus Transport Services · Kigali, Rwanda</span>
           </div>
         </div>
       </header>
@@ -133,15 +177,6 @@ export function DashboardPage() {
           <div>
             <div className="stat-value">{tracking.length}</div>
             <div className="stat-label">Active Buses</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon green">
-            <BusIcon size={18} />
-          </div>
-          <div>
-            <div className="stat-value">{connectedCount}</div>
-            <div className="stat-label">GPS Connected</div>
           </div>
         </div>
         <div className="stat-card">
@@ -159,7 +194,7 @@ export function DashboardPage() {
           </div>
           <div>
             <div className="stat-value">{delayedCount}</div>
-            <div className="stat-label">Delayed</div>
+            <div className="stat-label">Delayed Buses</div>
           </div>
         </div>
       </div>
@@ -214,7 +249,11 @@ export function DashboardPage() {
             highlightStopId={selectedStop?.id ?? null}
           />
           {selectedStop && (
-            <StopArrivalsCard stop={selectedStop} onClose={() => setSelectedStop(null)} />
+            <StopArrivalsCard
+              stop={selectedStop}
+              tracking={tracking}
+              onClose={() => setSelectedStop(null)}
+            />
           )}
         </main>
       </div>

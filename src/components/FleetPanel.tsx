@@ -77,6 +77,9 @@ export function FleetPanel({ tracking, selectedTripId, onSelectTrip }: FleetPane
                 <div className="progress-fill" style={{ width: `${t.completion_percentage}%` }} />
               </div>
               <p className="progress-text">{t.completion_percentage.toFixed(0)}% route complete</p>
+              {t.in_service === false && (
+                <p className="status heading-to-start">Heading to start</p>
+              )}
               {t.delay_status && <p className="status delayed">{t.delay_status}</p>}
               {t.early_status && <p className="status early">{t.early_status}</p>}
             </div>

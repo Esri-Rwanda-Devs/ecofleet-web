@@ -82,6 +82,12 @@ export function TripDetailPanel({ trip }: TripDetailPanelProps) {
         </div>
       </div>
 
+      {trip.in_service === false && (
+        <div className="alert heading-to-start" role="status">
+          Heading to start — service and delay tracking begin at{' '}
+          {trip.next_stop_name || 'the origin stop'}
+        </div>
+      )}
       {trip.delay_status && (
         <div className="alert delayed" role="status">{trip.delay_status}</div>
       )}
@@ -93,29 +99,46 @@ export function TripDetailPanel({ trip }: TripDetailPanelProps) {
         <div className="stop-etas">
           <h3>Stop ETAs (live)</h3>
           <p className="stop-etas-hint">
-            ETA and distance update as the bus moves along the route.
+            Arrival times follow the bus's live speed — if it slows down (e.g. traffic
+            jam), every stop below updates and the extra time shows as a delay.
           </p>
           <ul>
-            {trip.stop_etas.map((s) => (
-              <li key={s.stop_id}>
-                <div className="stop-eta-main">
-                  <span className="stop-name">{s.stop_name}</span>
-                  <span className="stop-eta">{formatMinutes(s.remaining_duration_seconds)}</span>
-                </div>
-                <div className="stop-eta-meta">
-                  <span>{formatDistance(s.remaining_distance_meters)} remaining</span>
-                  {s.leg_distance_meters != null && s.segment_speed_kmh != null && (
-                    <span>
-                      Leg: {formatDistance(s.leg_distance_meters)} @ {s.segment_speed_kmh.toFixed(0)} km/h
-                      {' → '}
-                      {formatMinutes(
-                        Math.round((s.leg_distance_meters / 1000 / s.segment_speed_kmh) * 3600)
+            {trip.stop_etas.map((s, i) => {
+              // Where the hop into this stop starts: the bus itself for the
+              // first upcoming stop, otherwise the previous stop in the list.
+              const fromLabel = i === 0 ? 'bus' : trip.stop_etas[i - 1].stop_name;
+              const legSeconds =
+                s.leg_duration_seconds ??
+                (s.leg_distance_meters != null && s.segment_speed_kmh
+                  ? Math.round((s.leg_distance_meters / 1000 / s.segment_speed_kmh) * 3600)
+                  : null);
+              const delay = s.delay_seconds ?? 0;
+              const delayMins = Math.round(Math.abs(delay) / 60);
+              return (
+                <li key={s.stop_id}>
+                  <div className="stop-eta-main">
+                    <span className="stop-name">{s.stop_name}</span>
+                    <span className="stop-eta-group">
+                      {delayMins >= 1 && (
+                        <span className={`stop-eta-badge ${delay > 0 ? 'late' : 'early'}`}>
+                          {delay > 0 ? `+${delayMins} min late` : `${delayMins} min early`}
+                        </span>
                       )}
+                      <span className="stop-eta">{formatMinutes(s.remaining_duration_seconds)}</span>
                     </span>
-                  )}
-                </div>
-              </li>
-            ))}
+                  </div>
+                  <div className="stop-eta-meta">
+                    <span>{formatDistance(s.remaining_distance_meters)} away</span>
+                    {s.leg_distance_meters != null && legSeconds != null && (
+                      <span>
+                        From {fromLabel}: {formatDistance(s.leg_distance_meters)} ·{' '}
+                        {formatMinutes(legSeconds)}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

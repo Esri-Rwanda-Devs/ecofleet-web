@@ -364,6 +364,16 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
+.live-indicator.offline {
+  color: var(--color-muted);
+  background: var(--color-muted-bg);
+}
+
+.live-indicator.offline .live-dot {
+  background: var(--color-muted);
+  animation: none;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(0.85); }
@@ -780,6 +790,19 @@ body {
   border-radius: 6px;
 }
 
+.status.heading-to-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--color-info-bg);
+  border-radius: 6px;
+}
+
 /* Detail panel */
 .detail-panel .vehicle-header {
   display: flex;
@@ -861,6 +884,12 @@ body {
   border: 1px solid rgba(5, 150, 105, 0.2);
 }
 
+.alert.heading-to-start {
+  background: var(--color-info-bg);
+  color: var(--color-accent);
+  border: 1px solid rgba(3, 105, 161, 0.2);
+}
+
 .stop-etas ul {
   list-style: none;
 }
@@ -916,6 +945,30 @@ body {
   color: var(--color-primary);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.stop-eta-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stop-eta-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.stop-eta-badge.late {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.stop-eta-badge.early {
+  color: var(--color-accent);
+  background: var(--color-info-bg);
 }
 
 /* Route planner */
@@ -1165,6 +1218,19 @@ body {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--color-muted);
+}
+
+.stop-arrival-sub {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.stop-arrival-timing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
 }
 
 .stop-arrival-status {
