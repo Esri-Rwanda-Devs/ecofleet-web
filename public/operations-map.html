@@ -235,13 +235,20 @@
     function busIconUrl(color) {
       var key = 'bus:' + color;
       if (!svgIconCache[key]) {
+        // Top-view bus, nose pointing up (rotated by live heading): side
+        // mirrors, tinted windshield, roof panels, rear window.
         svgIconCache[key] = svgDataUri(
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36">' +
-          '<rect x="3" y="2" width="18" height="32" rx="5.5" fill="' + color + '" stroke="#ffffff" stroke-width="2"/>' +
-          '<rect x="6.5" y="6" width="11" height="5" rx="1.5" fill="#ffffff" opacity="0.9"/>' +
-          '<rect x="6.5" y="14" width="11" height="2.4" rx="1.2" fill="#ffffff" opacity="0.55"/>' +
-          '<rect x="6.5" y="19" width="11" height="2.4" rx="1.2" fill="#ffffff" opacity="0.55"/>' +
-          '<rect x="6.5" y="26.5" width="11" height="3.5" rx="1.5" fill="#ffffff" opacity="0.75"/>' +
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 80">' +
+          '<rect x="0.5" y="13" width="8" height="4" rx="2" fill="' + color + '" stroke="#ffffff" stroke-width="1.4"/>' +
+          '<rect x="35.5" y="13" width="8" height="4" rx="2" fill="' + color + '" stroke="#ffffff" stroke-width="1.4"/>' +
+          '<path d="M7 14 Q7 2.5 22 2.5 Q37 2.5 37 14 L37 71 Q37 77.5 30 77.5 L14 77.5 Q7 77.5 7 71 Z" ' +
+            'fill="' + color + '" stroke="#ffffff" stroke-width="3"/>' +
+          '<path d="M11 13.5 Q11 7.5 22 7.5 Q33 7.5 33 13.5 L33 20 Q27.5 17.5 22 17.5 Q16.5 17.5 11 20 Z" ' +
+            'fill="#0f172a" opacity="0.82"/>' +
+          '<rect x="11.5" y="25" width="21" height="13" rx="3" fill="#ffffff" opacity="0.3"/>' +
+          '<rect x="11.5" y="42" width="21" height="13" rx="3" fill="#ffffff" opacity="0.3"/>' +
+          '<rect x="20.5" y="25" width="3" height="30" fill="#ffffff" opacity="0.35"/>' +
+          '<rect x="11" y="63" width="22" height="8" rx="2.5" fill="#0f172a" opacity="0.65"/>' +
           '</svg>'
         );
       }
@@ -269,7 +276,7 @@
       return {
         type: 'picture-marker',
         url: busIconUrl(connected ? '#34D399' : '#F87171'),
-        width: '22px', height: '33px',
+        width: '26px', height: '47px',
         angle: heading || 0
       };
     }

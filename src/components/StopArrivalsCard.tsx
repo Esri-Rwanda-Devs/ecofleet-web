@@ -85,7 +85,13 @@ function mergeArrivals(
     });
   }
 
-  return merged.sort((a, b) => a.eta_seconds - b.eta_seconds);
+  // Buses still coming first (soonest on top); already-departed ones last.
+  return merged.sort((a, b) => {
+    const aDeparted = a.status === 'departed' ? 1 : 0;
+    const bDeparted = b.status === 'departed' ? 1 : 0;
+    if (aDeparted !== bDeparted) return aDeparted - bDeparted;
+    return a.eta_seconds - b.eta_seconds;
+  });
 }
 
 function formatDistance(meters: number): string {
@@ -166,28 +172,32 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                 const delaySec =
                   arrival.live_delay_seconds ?? arrival.delay_minutes * 60;
                 const delayMins = Math.round(Math.abs(delaySec) / 60);
+                const atStation = arrival.status === 'at_station';
+                const departed = arrival.status === 'departed';
                 return (
                   <li key={arrival.trip_id} className="stop-arrival-row">
                     <div className="stop-arrival-info">
                       <span className="stop-arrival-route">{arrival.route_name}</span>
                       <span className="stop-arrival-meta">
                         <span className="stop-arrival-plate">{arrival.plate_number}</span>
-                        <span
-                          className={`stop-arrival-status ${
-                            arrival.status === 'at_station' ? 'at-station' : ''
-                          }`}
-                        >
-                          {STATUS_LABELS[arrival.status] ?? arrival.status}
+                        {!departed && (
+                          <span className={`stop-arrival-status ${atStation ? 'at-station' : ''}`}>
+                            {STATUS_LABELS[arrival.status] ?? arrival.status}
+                          </span>
+                        )}
+                      </span>
+                      {!atStation && !departed && (
+                        <span className="stop-arrival-sub">
+                          {arrival.distance_meters != null &&
+                            `${formatDistance(arrival.distance_meters)} away · `}
+                          arrives ~{formatClock(arrival.eta_seconds)}
                         </span>
-                      </span>
-                      <span className="stop-arrival-sub">
-                        {arrival.distance_meters != null &&
-                          `${formatDistance(arrival.distance_meters)} away · `}
-                        arrives ~{formatClock(arrival.eta_seconds)}
-                      </span>
+                      )}
                     </div>
                     <div className="stop-arrival-timing">
-                      <span className="stop-arrival-eta">{formatEta(arrival.eta_seconds)}</span>
+                      <span className={`stop-arrival-eta ${departed ? 'departed' : ''}`}>
+                        {departed ? 'Departed' : atStation ? 'Arrived' : formatEta(arrival.eta_seconds)}
+                      </span>
                       {delayMins >= 1 && (
                         <span className={`stop-eta-badge ${delaySec > 0 ? 'late' : 'early'}`}>
                           {delaySec > 0

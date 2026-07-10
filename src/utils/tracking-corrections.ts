@@ -80,6 +80,19 @@ export function correctTrackingForOrigin(
     // Renders the "En route" placeholder while still heading to the origin.
     current_stop_name: undefined,
     next_stop_name: origin.name,
-    stop_etas: [originEta, ...trip.stop_etas],
+    stop_etas: [
+      originEta,
+      // The backend snaps the deadheading bus onto the route start, so its
+      // ETAs measure from the origin — add the bus→origin approach on top so
+      // the timeline stays monotonic (a stop can't be reached before the one
+      // preceding it). Clear `eta` so clock times derive from the corrected
+      // countdowns instead of the backend's un-rebased ones.
+      ...trip.stop_etas.map((s) => ({
+        ...s,
+        eta: '',
+        remaining_distance_meters: s.remaining_distance_meters + Math.round(distM),
+        remaining_duration_seconds: s.remaining_duration_seconds + seconds,
+      })),
+    ],
   };
 }
