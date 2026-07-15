@@ -8,16 +8,59 @@ import {
 import { OperationsMap } from '../components/OperationsMap';
 import { FleetPanel } from '../components/FleetPanel';
 import { TripDetailPanel } from '../components/TripDetailPanel';
-import { RoutePlanner } from '../components/RoutePlanner';
 import { StopArrivalsCard } from '../components/StopArrivalsCard';
-import { BusIcon, FleetIcon, RouteIcon } from '../components/Icons';
+import { AlertsFeed, AlertEvent } from '../components/AlertsFeed';
+import {
+  BusIcon,
+  SearchIcon,
+} from '../components/Icons';
+import { formatRouteName } from '../utils/display-names';
 import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geometry';
-import { ArcGisConfig, BusStop, Route, RouteCalculation, TripTrackingState } from '../types';
+import { ArcGisConfig, BusStop, FleetOverview, Route, TripTrackingState } from '../types';
 
 /** Poll cadence while the realtime socket is down. */
 const POLL_MS = 5000;
 /** Slow reconciliation sweep while the socket is live. */
 const RECONCILE_MS = 30000;
+/** Fleet overview refresh (server caches it for 15s). */
+const OVERVIEW_MS = 30000;
+
+/** Live wall clock for the top bar — one quiet line. */
+function ClockNow() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="num whitespace-nowrap text-[0.9375rem] font-semibold text-ink">
+      {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+    </span>
+  );
+}
+
+function StatItem({
+  label,
+  value,
+  tone = 'neutral',
+  className = '',
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'neutral' | 'danger' | 'success';
+  className?: string;
+}) {
+  const valueCls =
+    tone === 'danger' ? 'text-danger' : tone === 'success' ? 'text-success' : 'text-ink';
+  return (
+    <div className={`stat-strip__item ${className}`}>
+      <b className={`num text-[1.125rem] font-bold leading-none ${valueCls}`}>{value}</b>
+      <span className="text-[0.75rem] font-semibold uppercase tracking-[0.06em] text-muted">
+        {label}
+      </span>
+    </div>
+  );
+}
 
 async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; stops: BusStop[] }> {
   const { route: detail, stops } = await api.getRoute(route.id);
@@ -61,12 +104,16 @@ async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; s
 export function DashboardPage() {
   const [config, setConfig] = useState<ArcGisConfig | null>(null);
   const [tracking, setTracking] = useState<TripTrackingState[]>([]);
+  const [overview, setOverview] = useState<FleetOverview | null>(null);
   const [selectedTripId, setSelectedTripId] = useState<string>();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [routeDisplay, setRouteDisplay] = useState<{ polyline?: number[][]; stops?: BusStop[] }>();
-  const [activeTab, setActiveTab] = useState<'fleet' | 'routes'>('fleet');
   const [selectedStop, setSelectedStop] = useState<{ id: string; name: string } | null>(null);
   const [socketLive, setSocketLive] = useState(false);
+  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const alertIdRef = useRef(0);
 
   const selectedTrip = tracking.find((t) => t.trip_id === selectedTripId) || null;
   const delayedCount = tracking.filter((t) => t.is_delayed).length;
@@ -75,6 +122,11 @@ export function DashboardPage() {
   // Client-side arrival truth (mirrors the mobile app): stops each bus has
   // genuinely been near, plus cached stop lists per route name.
   const routesRef = useRef<Route[]>([]);
+  // Mirror of the live list for alert-label resolution outside React's flow.
+  const trackingRef = useRef<TripTrackingState[]>([]);
+  useEffect(() => {
+    trackingRef.current = tracking;
+  }, [tracking]);
   const routeStopsRef = useRef<Map<string, BusStop[]>>(new Map());
   const visitedRef = useRef<Map<string, Set<string>>>(new Map());
 
@@ -129,6 +181,14 @@ export function DashboardPage() {
     }
   }, [applyCorrections]);
 
+  const refreshOverview = useCallback(async () => {
+    try {
+      setOverview(await api.getFleetOverview());
+    } catch {
+      /* endpoint optional — KPIs degrade gracefully */
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([api.getArcGisConfig(), api.getActiveTracking(), api.getRoutes()])
       .then(async ([arcgisConfig, trackingData, routesData]) => {
@@ -136,14 +196,49 @@ export function DashboardPage() {
         routesRef.current = routesData.routes;
         setRoutes(routesData.routes);
         setTracking(await applyCorrections(trackingData.tracking));
-
-        if (routesData.routes.length > 0) {
-          const display = await loadRouteForMap(routesData.routes[0]);
-          setRouteDisplay(display);
-        }
       })
       .catch(console.error);
   }, [applyCorrections]);
+
+  // Network-wide stats for the command bar KPIs.
+  useEffect(() => {
+    void refreshOverview();
+    const id = setInterval(refreshOverview, OVERVIEW_MS);
+    return () => clearInterval(id);
+  }, [refreshOverview]);
+
+  // The map follows the live operation: it always shows the route of the
+  // selected trip, or of the first active trip when nothing is selected —
+  // so a return trip's route appears the moment the driver starts it.
+  const mapRouteName = selectedTrip?.route_name ?? tracking[0]?.route_name;
+  const routeDisplayCacheRef = useRef<Map<string, { polyline?: number[][]; stops: BusStop[] }>>(
+    new Map()
+  );
+
+  useEffect(() => {
+    if (!mapRouteName) return;
+    const route = routesRef.current.find((r) => r.name === mapRouteName);
+    if (!route) return;
+
+    const cached = routeDisplayCacheRef.current.get(route.id);
+    if (cached) {
+      setRouteDisplay(cached);
+      return;
+    }
+
+    let cancelled = false;
+    loadRouteForMap(route)
+      .then((display) => {
+        routeDisplayCacheRef.current.set(route.id, display);
+        if (!cancelled) setRouteDisplay(display);
+      })
+      .catch(() => {
+        /* keep whatever route is currently displayed */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mapRouteName, routes]);
 
   // Realtime feed: GPS pings arrive as fleet:update the moment the driver app
   // sends them; fleet:all re-syncs the whole list on (re)connect.
@@ -169,10 +264,43 @@ export function DashboardPage() {
         return next;
       });
     };
-    const onAlert = (event: { channel?: string }) => {
+    const onAlert = (event: {
+      channel?: string;
+      payload?: {
+        trip_id?: string;
+        route_id?: string;
+        extra_minutes?: number;
+        reason?: string;
+      };
+    }) => {
+      const channel = event?.channel ?? '';
+      const payload = event?.payload ?? {};
+      if (
+        channel === 'trip:started' ||
+        channel === 'trip:completed' ||
+        channel === 'notifications:delay'
+      ) {
+        // Resolve labels now — the trip may leave the live list moments later.
+        const live = trackingRef.current.find((t) => t.trip_id === payload.trip_id);
+        const rawRoute =
+          live?.route_name ?? routesRef.current.find((r) => r.id === payload.route_id)?.name;
+        setAlerts((prev) => [
+          ...prev.slice(-29),
+          {
+            id: ++alertIdRef.current,
+            channel,
+            at: new Date(),
+            plate: live?.vehicle_plate,
+            routeName: rawRoute ? formatRouteName(rawRoute).name : undefined,
+            extraMinutes: payload.extra_minutes,
+            reason: payload.reason,
+          },
+        ]);
+      }
       // Trips appearing/disappearing aren't covered by fleet:update — re-sync.
-      if (event?.channel === 'trip:started' || event?.channel === 'trip:completed') {
+      if (channel === 'trip:started' || channel === 'trip:completed') {
         void refreshTracking();
+        void refreshOverview();
       }
     };
 
@@ -190,7 +318,22 @@ export function DashboardPage() {
       socket.off('fleet:update', onFleetUpdate);
       socket.off('alert', onAlert);
     };
-  }, [applyCorrections, correctOne, refreshTracking]);
+  }, [applyCorrections, correctOne, refreshTracking, refreshOverview]);
+
+  // "/" focuses the fleet search from anywhere (except while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/') return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Polling is the fallback: a slow reconciliation sweep while the socket is
   // live, the old 5s cadence only when it drops.
@@ -213,111 +356,110 @@ export function DashboardPage() {
     };
   }, [selectedTrip?.route_name, stopsForRouteName]);
 
-  const handleRouteCalculated = (result: RouteCalculation, stops: BusStop[]) => {
-    const polyline = parseRoutePolyline(result.polyline) ?? undefined;
-    setSelectedStop(null);
-    setRouteDisplay({ polyline, stops });
-  };
-
   if (!config) {
     return (
-      <div className="loading-screen">
-        <div className="loading-spinner" />
-        <p>Loading dashboard...</p>
+      <div className="flex h-screen flex-col items-center justify-center gap-5 bg-canvas">
+        <div className="brand-mark h-12 w-12 shadow-panel">
+          <BusIcon size={20} />
+        </div>
+        <div className="spinner h-8 w-8" role="status" aria-label="Loading" />
+        <p className="text-[1rem] font-medium text-muted">Loading operations map…</p>
       </div>
     );
   }
 
   return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div className="brand">
-          <div className="brand-icon">
-            <BusIcon size={22} />
+    <div className="relative flex h-screen flex-col overflow-hidden bg-[#E7F0ED]">
+      <header className="relative z-30 shrink-0">
+        <div className="pointer-events-auto section-bg flex min-h-[4.25rem] flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-2.5 md:px-5">
+          <div className="flex max-w-[min(100%,24rem)] items-center gap-2.5 rounded-xl bg-white px-2 py-1.5 shadow-card">
+            <div className="brand-mark">
+              <BusIcon size={15} />
+            </div>
+            <div className="min-w-0 leading-tight">
+              <h1 className="truncate text-[1.125rem] font-bold tracking-tight text-ink">
+                BTS Operations
+              </h1>
+              <p className="truncate text-[0.8125rem] font-medium text-muted">
+                Kigali · real-time command
+              </p>
+            </div>
+            <span
+              className={`ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.8125rem] font-bold ${
+                socketLive ? 'bg-success-bg text-success' : 'bg-muted-bg text-muted'
+              }`}
+              role="status"
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  socketLive ? 'animate-pulse-dot bg-success' : 'bg-muted'
+                }`}
+                aria-hidden="true"
+              />
+              {socketLive ? 'LIVE' : 'POLL'}
+            </span>
           </div>
-          <div>
-            <h1>BTS Operations</h1>
-            <span>Bus Transport Services · Kigali, Rwanda</span>
+
+          <div className="hidden xl:block">
+            <div className="stat-strip">
+              <StatItem label="active" value={tracking.length} />
+              <StatItem
+                label="delayed"
+                value={delayedCount}
+                tone={delayedCount > 0 ? 'danger' : 'success'}
+              />
+              <StatItem label="routes" value={routes.length} />
+              <StatItem label="available" value={overview?.buses_available ?? '—'} />
+              <StatItem
+                label="done"
+                value={overview?.completed_trips_today ?? '—'}
+                className="max-[1500px]:hidden"
+              />
+            </div>
           </div>
-        </div>
-        <div className="header-actions">
-          <span className={`live-indicator ${socketLive ? '' : 'offline'}`} role="status">
-            <span className="live-dot" />
-            {socketLive ? 'Live' : 'Polling'}
-          </span>
+
+          <div className="flex items-center gap-2">
+            <label className="relative hidden items-center rounded-xl bg-white shadow-card sm:flex">
+              <SearchIcon
+                size={15}
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
+              />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setQuery('');
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                type="search"
+                placeholder="Search plate or route"
+                aria-label="Search fleet"
+                className="h-10 w-48 rounded-xl bg-transparent pl-9 pr-8 text-[0.9375rem] font-medium text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/20 lg:w-60"
+              />
+              <kbd
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-muted-bg px-1.5 py-0.5 text-[12px] font-bold text-muted"
+                aria-hidden="true"
+              >
+                /
+              </kbd>
+            </label>
+
+            <div className="flex items-center gap-0.5 rounded-xl bg-white p-1 pl-1.5 shadow-card">
+              <AlertsFeed alerts={alerts} />
+              <span className="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden="true" />
+              <span className="hidden px-2.5 sm:block">
+                <ClockNow />
+              </span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <div className="stats-bar">
-        <div className="stat-card">
-          <div className="stat-icon teal">
-            <FleetIcon size={18} />
-          </div>
-          <div>
-            <div className="stat-value">{tracking.length}</div>
-            <div className="stat-label">Active Buses</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon blue">
-            <RouteIcon size={18} />
-          </div>
-          <div>
-            <div className="stat-value">{routes.length}</div>
-            <div className="stat-label">Routes</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon teal">
-            <span style={{ fontSize: '1rem', fontWeight: 800 }}>!</span>
-          </div>
-          <div>
-            <div className="stat-value">{delayedCount}</div>
-            <div className="stat-label">Delayed Buses</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="tab-bar">
-        <button
-          className={`tab ${activeTab === 'fleet' ? 'active' : ''}`}
-          onClick={() => setActiveTab('fleet')}
-        >
-          <FleetIcon size={16} />
-          Live Fleet
-        </button>
-        <button
-          className={`tab ${activeTab === 'routes' ? 'active' : ''}`}
-          onClick={() => setActiveTab('routes')}
-        >
-          <RouteIcon size={16} />
-          Route Management
-        </button>
-      </div>
-
-      <div className="dashboard-body">
-        <aside className="sidebar">
-          {activeTab === 'fleet' ? (
-            <FleetPanel
-              tracking={tracking}
-              selectedTripId={selectedTripId}
-              onSelectTrip={(tripId) =>
-                setSelectedTripId((prev) => (prev === tripId ? undefined : tripId))
-              }
-            />
-          ) : (
-            <RoutePlanner
-              routes={routes}
-              onRouteCalculated={handleRouteCalculated}
-              onRouteSelect={async (route) => {
-                setSelectedStop(null);
-                const display = await loadRouteForMap(route);
-                setRouteDisplay(display);
-              }}
-            />
-          )}
-        </aside>
-        <main className="map-area">
+      <div className="relative min-h-0 flex-1">
+        <div className="absolute inset-0">
           <OperationsMap
             config={config}
             tracking={tracking}
@@ -325,20 +467,40 @@ export function DashboardPage() {
             onVehicleClick={setSelectedTripId}
             onStopClick={setSelectedStop}
             highlightStopId={selectedStop?.id ?? null}
+            followTripId={selectedTripId ?? null}
           />
-          {selectedStop && (
-            <StopArrivalsCard
-              stop={selectedStop}
-              tracking={tracking}
-              onClose={() => setSelectedStop(null)}
-            />
-          )}
-        </main>
+        </div>
+
+        <aside
+          className={`absolute z-20 flex min-h-0 flex-col sheet animate-sheet-in
+            max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-h-[46vh] max-md:rounded-t-sheet max-md:border-x-0 max-md:border-b-0
+            md:inset-y-0 md:left-0 md:w-[380px] md:rounded-none md:border-b-0 md:border-l-0 md:border-t-0
+            ${selectedTrip ? 'max-lg:hidden' : ''}`}
+        >
+          <div className="sheet-handle md:hidden" aria-hidden="true" />
+          <FleetPanel
+            tracking={tracking}
+            query={query}
+            selectedTripId={selectedTripId}
+            onSelectTrip={(tripId) =>
+              setSelectedTripId((prev) => (prev === tripId ? undefined : tripId))
+            }
+          />
+        </aside>
+
         {selectedTrip && (
           <TripDetailPanel
             trip={selectedTrip}
             routeStops={detailStops}
             onClose={() => setSelectedTripId(undefined)}
+          />
+        )}
+
+        {selectedStop && (
+          <StopArrivalsCard
+            stop={selectedStop}
+            tracking={tracking}
+            onClose={() => setSelectedStop(null)}
           />
         )}
       </div>

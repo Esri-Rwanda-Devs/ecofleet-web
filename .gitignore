@@ -1,2 +1,4 @@
 node_modulestsconfig.tsbuildinfo
 node_modules
+
+.env

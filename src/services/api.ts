@@ -1,5 +1,6 @@
 import type {
   ArcGisConfig,
+  FleetOverview,
   Route,
   BusStop,
   RouteCalculation,
@@ -59,6 +60,10 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  getFleetOverview() {
+    return this.request<FleetOverview>('/trip/fleet/overview');
   }
 
   getActiveTracking() {
