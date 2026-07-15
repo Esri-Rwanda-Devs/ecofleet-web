@@ -27,6 +27,9 @@
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
     var highlightGraphic = null, highlightStopId = null;
+    // One-shot focus: when the parent selects a bus the camera flies to it
+    // once, then the operator keeps full control of the map.
+    var focusTripId = null;
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
@@ -89,6 +92,11 @@
             });
             if (vehicleHit && vehicleHit.graphic.attributes && vehicleHit.graphic.attributes.tripId) {
               window.parent.postMessage({ type: 'vehicleClick', tripId: vehicleHit.graphic.attributes.tripId }, '*');
+              var busGeom = vehicleHit.graphic.geometry;
+              view.goTo(
+                { center: [busGeom.longitude, busGeom.latitude], zoom: Math.max(view.zoom, 17) },
+                { duration: 600 }
+              ).catch(function() {});
               return;
             }
             var stopHit = res.results.find(function(r) {
@@ -222,37 +230,16 @@
     // Vehicles glide between position updates instead of jumping: each new
     // position starts a ~4.5s tween (just under the 5s dashboard poll), so the
     // marker arrives as the next update lands.
-    var vehicleMarkers = {}; // tripId -> { marker, label, lon, lat, hdg, connected, anim }
+    var vehicleMarkers = {}; // tripId -> { marker, label, lon, lat, connected, anim }
     var VEHICLE_ANIM_MS = 4500;
     var vehicleAnimRunning = false;
 
-    // Shared SVG icons (same visual language as the mobile app): a top-view
-    // bus for vehicles and a rounded bus badge for stops. Cached per color.
+    // Stop markers stay as inline SVG badges (cached per color); the vehicle
+    // marker is the isometric bus image at /bus-marker.png (transparent
+    // derivative of bus.avif).
     var svgIconCache = {};
     function svgDataUri(svg) {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    }
-    function busIconUrl(color) {
-      var key = 'bus:' + color;
-      if (!svgIconCache[key]) {
-        // Top-view bus, nose pointing up (rotated by live heading): side
-        // mirrors, tinted windshield, roof panels, rear window.
-        svgIconCache[key] = svgDataUri(
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 80">' +
-          '<rect x="0.5" y="13" width="8" height="4" rx="2" fill="' + color + '" stroke="#ffffff" stroke-width="1.4"/>' +
-          '<rect x="35.5" y="13" width="8" height="4" rx="2" fill="' + color + '" stroke="#ffffff" stroke-width="1.4"/>' +
-          '<path d="M7 14 Q7 2.5 22 2.5 Q37 2.5 37 14 L37 71 Q37 77.5 30 77.5 L14 77.5 Q7 77.5 7 71 Z" ' +
-            'fill="' + color + '" stroke="#ffffff" stroke-width="3"/>' +
-          '<path d="M11 13.5 Q11 7.5 22 7.5 Q33 7.5 33 13.5 L33 20 Q27.5 17.5 22 17.5 Q16.5 17.5 11 20 Z" ' +
-            'fill="#0f172a" opacity="0.82"/>' +
-          '<rect x="11.5" y="25" width="21" height="13" rx="3" fill="#ffffff" opacity="0.3"/>' +
-          '<rect x="11.5" y="42" width="21" height="13" rx="3" fill="#ffffff" opacity="0.3"/>' +
-          '<rect x="20.5" y="25" width="3" height="30" fill="#ffffff" opacity="0.35"/>' +
-          '<rect x="11" y="63" width="22" height="8" rx="2.5" fill="#0f172a" opacity="0.65"/>' +
-          '</svg>'
-        );
-      }
-      return svgIconCache[key];
     }
     function stopIconUrl(color) {
       var key = 'stop:' + color;
@@ -272,27 +259,48 @@
       return svgIconCache[key];
     }
 
-    function vehicleSymbol(connected, heading) {
+    // Isometric bus image — a fixed 3D render, so it can't rotate to the
+    // exact heading without looking upside-down. Direction of travel is
+    // shown by mirroring instead: the original art faces lower-left
+    // (westbound half), the flipped copy faces lower-right (eastbound half).
+    function vehicleIconUrl(heading) {
+      var h = ((heading % 360) + 360) % 360;
+      return h < 180 ? '/bus-marker-east.png' : '/bus-marker.png';
+    }
+
+    function vehicleSymbol(heading) {
       return {
         type: 'picture-marker',
-        url: busIconUrl(connected ? '#34D399' : '#F87171'),
-        width: '26px', height: '47px',
-        angle: heading || 0
+        url: vehicleIconUrl(heading || 0),
+        width: '44px', height: '34px'
       };
     }
 
-    function vehicleLabelSymbol(plate) {
-      return {
-        type: 'text', text: plate, color: '#fff', haloColor: '#0F766E', haloSize: 2,
-        yoffset: -22, font: { size: 11, weight: 'bold' }
-      };
-    }
-
-    // Shortest-arc interpolation so the triangle turns 350°->10° through north,
+    // Shortest-arc interpolation so the bus turns 350°->10° through north,
     // not the long way around.
     function lerpHeading(a, b, p) {
       var d = ((b - a + 540) % 360) - 180;
       return (a + d * p + 360) % 360;
+    }
+
+    // Direction of travel between two fixes; more reliable for icon
+    // orientation than GPS heading, which the driver app sends as 0 when
+    // the Doppler heading is unknown.
+    function bearing(fromLon, fromLat, toLon, toLat) {
+      var toRad = Math.PI / 180;
+      var dLon = (toLon - fromLon) * toRad;
+      var y = Math.sin(dLon) * Math.cos(toLat * toRad);
+      var x = Math.cos(fromLat * toRad) * Math.sin(toLat * toRad) -
+        Math.sin(fromLat * toRad) * Math.cos(toLat * toRad) * Math.cos(dLon);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function vehicleLabelSymbol(plate, connected) {
+      return {
+        type: 'text', text: plate, color: '#fff',
+        haloColor: connected ? '#0F766E' : '#B91C1C', haloSize: 2,
+        yoffset: -24, font: { size: 11, weight: 'bold' }
+      };
     }
 
     function vehicleAnimTick() {
@@ -307,7 +315,10 @@
         var hdg = lerpHeading(e.anim.fromHdg, e.anim.toHdg, p);
         var geom = { type: 'point', longitude: lon, latitude: lat };
         e.marker.geometry = geom;
-        e.marker.symbol = vehicleSymbol(e.connected, hdg);
+        // Only swap the image when the east/west facing actually changes.
+        if (vehicleIconUrl(hdg) !== vehicleIconUrl(e.hdg)) {
+          e.marker.symbol = vehicleSymbol(hdg);
+        }
         e.label.geometry = geom;
         e.lon = lon; e.lat = lat; e.hdg = hdg;
         if (p < 1) any = true; else e.anim = null;
@@ -327,34 +338,54 @@
             var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
             var marker = new Graphic({
               geometry: geom,
-              symbol: vehicleSymbol(connected, t.heading || 0),
+              symbol: vehicleSymbol(t.heading),
               attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
             });
-            var label = new Graphic({ geometry: geom, symbol: vehicleLabelSymbol(t.vehicle_plate) });
+            var label = new Graphic({ geometry: geom, symbol: vehicleLabelSymbol(t.vehicle_plate, connected) });
             vehicleLayer.addMany([marker, label]);
             vehicleMarkers[t.trip_id] = {
               marker: marker, label: label,
               lon: t.longitude, lat: t.latitude, hdg: t.heading || 0,
               connected: connected, anim: null
             };
+            if (focusTripId === t.trip_id) {
+              flyToVehicle(t.longitude, t.latitude);
+              focusTripId = null;
+            }
             return;
           }
+          // GPS status lives in the plate label halo (the bus image itself
+          // is a fixed illustration): teal when connected, red when it drops.
+          if (connected !== e.connected) {
+            e.label.symbol = vehicleLabelSymbol(t.vehicle_plate, connected);
+          }
           e.connected = connected;
+          // Orient along the actual direction of travel once the bus has
+          // moved a few metres; below that trust the reported GPS heading,
+          // keeping the last known angle while stationary (heading 0 can
+          // mean "unknown").
+          var movedMeters = Math.hypot(
+            (t.latitude - e.lat) * 111320,
+            (t.longitude - e.lon) * 111320 * Math.cos(t.latitude * Math.PI / 180)
+          );
+          var newHdg = movedMeters > 8
+            ? bearing(e.lon, e.lat, t.longitude, t.latitude)
+            : (t.heading ? t.heading : e.hdg);
           // Teleports (trip restart, long GPS gap) snap instead of gliding
           // across the city. ~0.01° ≈ 1km.
           var far = Math.abs(t.longitude - e.lon) + Math.abs(t.latitude - e.lat) > 0.01;
           if (far) {
             var snapGeom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
             e.marker.geometry = snapGeom;
-            e.marker.symbol = vehicleSymbol(connected, t.heading || 0);
+            e.marker.symbol = vehicleSymbol(t.heading || newHdg);
             e.label.geometry = snapGeom;
-            e.lon = t.longitude; e.lat = t.latitude; e.hdg = t.heading || 0;
+            e.lon = t.longitude; e.lat = t.latitude; e.hdg = t.heading || newHdg;
             e.anim = null;
           } else {
             e.anim = {
               start: Date.now(),
               fromLon: e.lon, fromLat: e.lat, fromHdg: e.hdg,
-              toLon: t.longitude, toLat: t.latitude, toHdg: t.heading || 0
+              toLon: t.longitude, toLat: t.latitude, toHdg: newHdg
             };
             if (!vehicleAnimRunning) {
               vehicleAnimRunning = true;
@@ -372,12 +403,27 @@
       });
     }
 
+    function flyToVehicle(lon, lat) {
+      if (!view) return;
+      view.goTo(
+        { center: [lon, lat], zoom: Math.max(view.zoom, 17) },
+        { duration: 700 }
+      ).catch(function() {});
+    }
+
     window.addEventListener('message', function(event) {
       var data = event.data;
       if (!data || !data.type) return;
       if (data.type === 'setRoute') drawRoute(data);
       if (data.type === 'setTracking') drawVehicles(data.tracking);
       if (data.type === 'setHighlightStop') applyHighlight(data.stopId);
+      if (data.type === 'followVehicle') {
+        focusTripId = data.tripId || null;
+        if (focusTripId) {
+          var fe = vehicleMarkers[focusTripId];
+          if (fe) { flyToVehicle(fe.lon, fe.lat); focusTripId = null; }
+        }
+      }
       if (data.type === 'setCenter' && view) {
         view.goTo({ center: [data.longitude, data.latitude], zoom: data.zoom || 15 });
       }

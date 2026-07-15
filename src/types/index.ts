@@ -59,6 +59,12 @@ export interface StationArrival {
   status: string;
 }
 
+export interface SegmentTotals {
+  total_distance_meters: number;
+  total_duration_seconds: number;
+  segment_count?: number;
+}
+
 export interface TripTrackingState {
   trip_id: string;
   driver_id: string;
@@ -77,6 +83,10 @@ export interface TripTrackingState {
   next_stop_name?: string;
   remaining_distance_meters: number;
   remaining_duration_seconds: number;
+  /** Planned duration for the full trip to destination. */
+  total_duration_seconds?: number;
+  /** Sum of route leg distance/duration to destination. */
+  segment_totals?: SegmentTotals;
   eta: string;
   completion_percentage: number;
   delay_seconds: number;
@@ -87,6 +97,18 @@ export interface TripTrackingState {
   gps_connected: boolean;
   stop_etas: StopEta[];
   last_updated: string;
+}
+
+/** Network-wide stats from GET /trip/fleet/overview (cached 15s server-side). */
+export interface FleetOverview {
+  total_buses: number;
+  buses_on_route: number;
+  buses_available: number;
+  buses_arrived: number;
+  active_trips: number;
+  completed_trips_today: number;
+  routes_active: number;
+  average_delay_minutes: number;
 }
 
 export interface BuslaneConfig {

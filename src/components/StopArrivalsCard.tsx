@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { StationArrival, StopEta, TripTrackingState } from '../types';
 
-// Backend caches arrivals for 8s; 10s polling keeps ETAs fresh without spam.
 const POLL_MS = 10_000;
 
 const STATUS_LABELS: Record<string, string> = {
@@ -13,7 +12,6 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface StopArrivalsCardProps {
   stop: { id: string; name: string };
-  /** Live fleet tracking from the dashboard poll — source of leg-based ETAs. */
   tracking: TripTrackingState[];
   onClose: () => void;
 }
@@ -26,20 +24,11 @@ function formatEta(seconds: number): string {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-/** A station arrival enriched with live tracking data when available. */
 interface LiveArrival extends StationArrival {
-  /** Live road distance from the bus to this stop, when tracked. */
   distance_meters?: number;
-  /** Live delay at THIS stop (+late/−early, seconds), from the ETA engine. */
   live_delay_seconds?: number;
 }
 
-/**
- * Merge the station-board arrivals with the live tracking state. The station
- * endpoint estimates ETA as straight-line distance with a schedule floor, while
- * `stop_etas` carries the leg-based live ETA shown in the fleet timeline — when
- * a bus has a live entry for this stop, that ETA wins so both panels agree.
- */
 function mergeArrivals(
   apiArrivals: StationArrival[] | null,
   tracking: TripTrackingState[],
@@ -69,7 +58,6 @@ function mergeArrivals(
     );
   }
 
-  // Buses the station board missed (e.g. its 8s cache) but that are live now.
   for (const [tripId, { trip, eta }] of liveByTrip) {
     if (seen.has(tripId)) continue;
     merged.push({
@@ -85,7 +73,6 @@ function mergeArrivals(
     });
   }
 
-  // Buses still coming first (soonest on top); already-departed ones last.
   return merged.sort((a, b) => {
     const aDeparted = a.status === 'departed' ? 1 : 0;
     const bDeparted = b.status === 'departed' ? 1 : 0;
@@ -106,7 +93,6 @@ function formatClock(secondsFromNow: number): string {
 }
 
 export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardProps) {
-  // null = nothing loaded yet for this stop (show spinner / first-fetch error).
   const [arrivals, setArrivals] = useState<StationArrival[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -123,7 +109,6 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
       const requestedId = stop.id;
       try {
         const data = await api.getStationArrivals(requestedId);
-        // Discard responses that arrive after close or after switching stops.
         if (cancelled || stopIdRef.current !== requestedId) return;
         setArrivals(data);
         setError(null);
@@ -143,63 +128,104 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
   }, [stop.id]);
 
   const sorted = mergeArrivals(arrivals, tracking, stop.id);
-  // Live tracking can render rows before the station endpoint answers.
   const loading = arrivals === null && sorted.length === 0;
 
   return (
-    <div className="stop-arrivals-card" role="dialog" aria-label={`Arrivals at ${stop.name}`}>
-      <div className="stop-arrivals-header">
-        <h3>{stop.name}</h3>
-        <button className="stop-arrivals-close" onClick={onClose} aria-label="Close stop details">
+    <div
+      className="absolute bottom-5 left-5 z-20 w-[340px] max-w-[calc(100%-2.5rem)] animate-sheet-in sheet rounded-sheet p-4 max-md:inset-x-3 max-md:bottom-[calc(46vh+1.25rem)] max-md:w-auto md:left-[calc(380px+1.25rem)]"
+      role="dialog"
+      aria-label={`Arrivals at ${stop.name}`}
+    >
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <p className="text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-muted">
+            Arrivals
+          </p>
+          <h3 className="mt-0.5 text-[1.1875rem] font-bold tracking-tight text-ink">{stop.name}</h3>
+        </div>
+        <button
+          className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          onClick={onClose}
+          aria-label="Close stop details"
+        >
           ×
         </button>
       </div>
 
       {loading ? (
         error ? (
-          <p className="stop-arrivals-error">{error}</p>
+          <p className="py-1 text-body text-danger">{error}</p>
         ) : (
-          <p className="stop-arrivals-loading">Loading arrivals…</p>
+          <p className="py-1 text-body text-muted">Loading arrivals…</p>
         )
       ) : (
         <>
           {sorted.length === 0 ? (
-            <p className="stop-arrivals-empty">No buses heading to this stop right now</p>
+            <p className="py-1 text-body text-muted">No buses heading to this stop right now</p>
           ) : (
-            <ul className="stop-arrivals-list">
+            <ul className="scrollbar-thin flex max-h-[260px] list-none flex-col gap-1 overflow-y-auto">
               {sorted.map((arrival) => {
-                // Prefer the live per-stop delay; fall back to reported minutes.
                 const delaySec =
                   arrival.live_delay_seconds ?? arrival.delay_minutes * 60;
                 const delayMins = Math.round(Math.abs(delaySec) / 60);
                 const atStation = arrival.status === 'at_station';
                 const departed = arrival.status === 'departed';
                 return (
-                  <li key={arrival.trip_id} className="stop-arrival-row">
-                    <div className="stop-arrival-info">
-                      <span className="stop-arrival-route">{arrival.route_name}</span>
-                      <span className="stop-arrival-meta">
-                        <span className="stop-arrival-plate">{arrival.plate_number}</span>
+                  <li
+                    key={arrival.trip_id}
+                    className="flex items-center justify-between gap-2 rounded-2xl bg-muted-bg p-3"
+                  >
+                    <div className="flex min-w-0 flex-col gap-[3px]">
+                      <span
+                        className="break-words text-[0.9375rem] font-bold leading-snug text-ink"
+                        title={arrival.route_name}
+                      >
+                        {arrival.route_name}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="num text-[0.8125rem] font-semibold text-muted">
+                          {arrival.plate_number}
+                        </span>
                         {!departed && (
-                          <span className={`stop-arrival-status ${atStation ? 'at-station' : ''}`}>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[0.75rem] font-semibold ${
+                              atStation
+                                ? 'bg-success-bg text-success'
+                                : 'bg-muted-bg text-primary'
+                            }`}
+                          >
                             {STATUS_LABELS[arrival.status] ?? arrival.status}
                           </span>
                         )}
                       </span>
                       {!atStation && !departed && (
-                        <span className="stop-arrival-sub">
+                        <span className="num break-words text-[0.8125rem] leading-snug text-muted">
                           {arrival.distance_meters != null &&
                             `${formatDistance(arrival.distance_meters)} away · `}
                           arrives ~{formatClock(arrival.eta_seconds)}
                         </span>
                       )}
                     </div>
-                    <div className="stop-arrival-timing">
-                      <span className={`stop-arrival-eta ${departed ? 'departed' : ''}`}>
-                        {departed ? 'Departed' : atStation ? 'Arrived' : formatEta(arrival.eta_seconds)}
+                    <div className="flex shrink-0 flex-col items-end gap-[3px]">
+                      <span
+                        className={`num whitespace-nowrap text-[1.0625rem] ${
+                          departed ? 'font-semibold text-muted' : 'font-bold text-ink'
+                        }`}
+                      >
+                        {departed
+                          ? 'Departed'
+                          : atStation
+                            ? 'Arrived'
+                            : formatEta(arrival.eta_seconds)}
                       </span>
                       {delayMins >= 1 && (
-                        <span className={`stop-eta-badge ${delaySec > 0 ? 'late' : 'early'}`}>
+                        <span
+                          className={`num whitespace-nowrap rounded-full px-2 py-px text-[0.8125rem] font-bold ${
+                            delaySec > 0
+                              ? 'bg-danger-bg text-danger'
+                              : 'bg-warning-bg text-warning'
+                          }`}
+                        >
                           {delaySec > 0
                             ? `+${delayMins} min late`
                             : `${delayMins} min early`}
@@ -212,7 +238,7 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
             </ul>
           )}
           {error && updatedAt && (
-            <p className="stop-arrivals-stale">
+            <p className="mt-2 text-[0.875rem] font-semibold text-warning">
               Update failed — showing{' '}
               {updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} data,
               retrying…

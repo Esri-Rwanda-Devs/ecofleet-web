@@ -25,6 +25,8 @@ interface OperationsMapProps {
   onStopClick?: (stop: { id: string; name: string }) => void;
   /** Stop id to draw a selection ring around; null clears it. */
   highlightStopId?: string | null;
+  /** Trip whose bus the camera should zoom to and follow; null releases it. */
+  followTripId?: string | null;
 }
 
 /**
@@ -37,6 +39,7 @@ export function OperationsMap({
   onVehicleClick,
   onStopClick,
   highlightStopId,
+  followTripId,
 }: OperationsMapProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -105,20 +108,31 @@ export function OperationsMap({
     );
   }, [mapReady, highlightStopId]);
 
+  useEffect(() => {
+    if (!mapReady || !iframeRef.current?.contentWindow) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'followVehicle', tripId: followTripId ?? null },
+      '*'
+    );
+  }, [mapReady, followTripId]);
+
   return (
-    <div className="map-wrapper">
+    <div className="absolute inset-0 h-full w-full">
       <iframe
         key={mapSrc}
         ref={iframeRef}
         src={mapSrc}
         title="Satellite operations map"
-        className="map-container map-iframe"
+        className="block h-full w-full border-0 bg-[#1a1a1a]"
         allow="geolocation"
       />
       {!mapReady && (
-        <div className="map-loading map-loading-dark" role="status">
-          <div className="loading-spinner" />
-          <p>Loading satellite imagery…</p>
+        <div
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#E8E8E8] text-[1rem] font-medium text-muted"
+          role="status"
+        >
+          <div className="spinner h-8 w-8" />
+          <p>Loading map…</p>
         </div>
       )}
     </div>
