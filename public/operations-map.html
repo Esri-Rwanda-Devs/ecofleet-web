@@ -151,11 +151,11 @@
           var line = new Polyline({ paths: [polyline] });
           routeLayer.add(new Graphic({
             geometry: line,
-            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 9, cap: 'round', join: 'round' })
+            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
           }));
           routeLayer.add(new Graphic({
             geometry: line,
-            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 6, cap: 'round', join: 'round' })
+            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 3, cap: 'round', join: 'round' })
           }));
 
           var lngs = polyline.map(function(c) { return c[0]; });

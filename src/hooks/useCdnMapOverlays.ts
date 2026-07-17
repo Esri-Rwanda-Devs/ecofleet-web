@@ -134,7 +134,7 @@ export function useCdnRouteGraphics(
             geometry: routeLine,
             symbol: new SimpleLineSymbol({
               color: [255, 255, 255, 0.95],
-              width: 9,
+              width: 5,
               cap: 'round',
               join: 'round',
             }),
@@ -146,7 +146,7 @@ export function useCdnRouteGraphics(
             geometry: routeLine,
             symbol: new SimpleLineSymbol({
               color: '#0F766E',
-              width: 6,
+              width: 3,
               cap: 'round',
               join: 'round',
             }),
