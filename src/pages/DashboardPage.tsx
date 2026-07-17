@@ -381,7 +381,7 @@ export function DashboardPage() {
                 BTS Operations
               </h1>
               <p className="truncate text-[0.8125rem] font-medium text-muted">
-                Kigali · real-time command
+                Kigali · Real-Time Command
               </p>
             </div>
             <span
