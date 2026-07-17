@@ -1,7 +1,12 @@
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Socket.IO must hit Render directly (Vercel rewrites don't proxy websockets).
+// Backend gateway allows all origins (`cors: { origin: '*' }`).
+const SOCKET_URL = import.meta.env.PROD
+  ? import.meta.env.VITE_SOCKET_URL || 'https://ecofleet-backend-1.onrender.com'
+  : import.meta.env.VITE_SOCKET_URL ||
+    import.meta.env.VITE_API_URL ||
+    'http://localhost:8000';
 
 let socket: Socket | null = null;
 

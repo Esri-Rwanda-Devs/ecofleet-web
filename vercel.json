@@ -1,0 +1,28 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ecofleet-backend-1.onrender.com/api/:path*"
+    },
+    {
+      "source": "/trip/:path*",
+      "destination": "https://ecofleet-backend-1.onrender.com/trip/:path*"
+    },
+    {
+      "source": "/routing/:path*",
+      "destination": "https://ecofleet-backend-1.onrender.com/routing/:path*"
+    },
+    {
+      "source": "/tracking/:path*",
+      "destination": "https://ecofleet-backend-1.onrender.com/tracking/:path*"
+    },
+    {
+      "source": "/notifications/:path*",
+      "destination": "https://ecofleet-backend-1.onrender.com/notifications/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://ecofleet-backend-1.onrender.com/health"
+    }
+  ]
+}
