@@ -365,7 +365,7 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
                     <div className="mt-2 space-y-1.5 border-t border-line/80 pt-2">
                       <div className="flex items-start justify-between gap-3 text-[0.875rem]">
                         <span className="min-w-0 flex-1 break-words leading-snug text-muted">
-                          Travel time {prevName} to {hereName}
+                          ETA from {prevName} to {hereName}
                         </span>
                         <span
                           className={`num shrink-0 pt-0.5 font-semibold ${
