@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { BUS_ROUTES_LAYER_URL, BUS_STOPS_LAYER_URL } from '../arcgis/constants';
 import type { ArcGisConfig, BusStop, TripTrackingState } from '../types';
 
 const ENV_ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || '';
@@ -8,6 +9,17 @@ function buildMapUrl(config: ArcGisConfig): string {
   const token = config.arcgisToken || ENV_ARCGIS_TOKEN;
   if (token) params.set('token', token);
   if (config.portalUrl) params.set('portal', config.portalUrl);
+  // Network-wide FeatureLayers on the map only (selected trip still uses backend APIs).
+  const stopsUrl =
+    config.buslane?.stopsLayerUrl ||
+    config.buslane?.busStopsUrl ||
+    BUS_STOPS_LAYER_URL;
+  const routesUrl =
+    config.buslane?.routesLayerUrl ||
+    config.buslane?.busRoutesUrl ||
+    BUS_ROUTES_LAYER_URL;
+  params.set('stopsLayer', stopsUrl);
+  params.set('routesLayer', routesUrl);
   const qs = params.toString();
   return qs ? `/operations-map.html?${qs}` : '/operations-map.html';
 }
@@ -43,7 +55,17 @@ export function OperationsMap({
 }: OperationsMapProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [mapReady, setMapReady] = useState(false);
-  const mapSrc = useMemo(() => buildMapUrl(config), [config.portalUrl, config.arcgisToken]);
+  const mapSrc = useMemo(
+    () => buildMapUrl(config),
+    [
+      config.portalUrl,
+      config.arcgisToken,
+      config.buslane?.stopsLayerUrl,
+      config.buslane?.routesLayerUrl,
+      config.buslane?.busStopsUrl,
+      config.buslane?.busRoutesUrl,
+    ],
+  );
 
   useEffect(() => {
     setMapReady(false);

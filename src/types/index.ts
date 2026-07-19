@@ -112,13 +112,17 @@ export interface FleetOverview {
 }
 
 export interface BuslaneConfig {
-  busStopsUrl: string;
-  busRoutesUrl: string;
-  hasToken: boolean;
-  lineNameField: string;
-  stopRouteField: string;
-  lineFields: string[];
-  stopFields: string[];
+  /** Preferred FeatureServer layer URLs (Bus_Lanes_BTS). */
+  stopsLayerUrl?: string;
+  routesLayerUrl?: string;
+  /** Legacy field names kept optional for older clients. */
+  busStopsUrl?: string;
+  busRoutesUrl?: string;
+  hasToken?: boolean;
+  lineNameField?: string;
+  stopRouteField?: string;
+  lineFields?: string[];
+  stopFields?: string[];
 }
 
 export interface ArcGisConfig {
