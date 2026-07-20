@@ -11,11 +11,12 @@
     #viewDiv { position: fixed; inset: 0; }
     #loading {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      flex-direction: column; background: #e5e3df; z-index: 999; pointer-events: none;
-      font-family: system-ui, sans-serif; color: #64748b; font-size: 14px;
+      flex-direction: column; background: #FFFFFF; z-index: 999; pointer-events: none;
+      font-family: "IBM Plex Sans", system-ui, sans-serif; color: #525252; font-size: 13px;
+      font-weight: 500;
     }
     .spinner {
-      width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #2563eb;
+      width: 28px; height: 28px; border: 3px solid #E5E5E5; border-top-color: #16A34A;
       border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -27,9 +28,11 @@
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
     var highlightGraphic = null, highlightStopId = null;
-    // One-shot focus: when the parent selects a bus the camera flies to it
-    // once, then the operator keeps full control of the map.
-    var focusTripId = null;
+    var followingTripId = null;
+    var pendingFocusTripId = null;
+    var routeZoomSuppressedUntil = 0;
+    var NAV_ZOOM = 18;
+    var lastCamFollowAt = 0;
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
@@ -67,11 +70,10 @@
           } catch (e) {}
         }
 
-        routeLayer = new GraphicsLayer();
-        stopLayer = new GraphicsLayer();
-        vehicleLayer = new GraphicsLayer();
+        routeLayer = new GraphicsLayer({ listMode: 'hide' });
+        stopLayer = new GraphicsLayer({ listMode: 'hide' });
+        vehicleLayer = new GraphicsLayer({ listMode: 'hide' });
 
-        // Same pattern as working mobile WebView — satellite basemap, no custom UI widgets
         var map = new Map({ basemap: 'satellite' });
         map.addMany([routeLayer, stopLayer, vehicleLayer]);
         window.__basemapName = 'satellite';
@@ -81,49 +83,45 @@
           map: map,
           center: [30.088, -1.946],
           zoom: 15,
-          constraints: { minZoom: 8, maxZoom: 19 },
+          constraints: { minZoom: 8, maxZoom: 20 },
           ui: { components: [] }
         });
 
         view.on('click', function(event) {
           view.hitTest(event, { include: [vehicleLayer, stopLayer] }).then(function(res) {
             var vehicleHit = res.results.find(function(r) {
-              return r.graphic && r.graphic.layer === vehicleLayer;
+              return r.graphic && r.graphic.layer === vehicleLayer && r.graphic.attributes && r.graphic.attributes.tripId;
             });
-            if (vehicleHit && vehicleHit.graphic.attributes && vehicleHit.graphic.attributes.tripId) {
-              window.parent.postMessage({ type: 'vehicleClick', tripId: vehicleHit.graphic.attributes.tripId }, '*');
-              var busGeom = vehicleHit.graphic.geometry;
-              view.goTo(
-                { center: [busGeom.longitude, busGeom.latitude], zoom: Math.max(view.zoom, 17) },
-                { duration: 600 }
-              ).catch(function() {});
+            if (vehicleHit) {
+              var tripId = vehicleHit.graphic.attributes.tripId;
+              window.parent.postMessage({ type: 'vehicleClick', tripId: tripId }, '*');
+              startFollow(tripId, true);
               return;
             }
             var stopHit = res.results.find(function(r) {
               return r.graphic && r.graphic.attributes && r.graphic.attributes.kind === 'stop';
             });
             if (stopHit) {
+              var geom = stopHit.graphic.geometry;
               window.parent.postMessage({
                 type: 'stopClick',
                 stopId: stopHit.graphic.attributes.id,
-                name: stopHit.graphic.attributes.name
+                name: stopHit.graphic.attributes.name,
+                longitude: geom && geom.longitude,
+                latitude: geom && geom.latitude
               }, '*');
             }
-          });
+          }).catch(function() {});
         });
 
         view.when(function() {
           signalReady();
         }).catch(function() {
-          // Fallback to OSM if satellite fails
           try {
             var osm = new OpenStreetMapLayer();
             map.basemap = new Basemap({ baseLayers: [osm], title: 'OpenStreetMap' });
             window.__basemapName = 'OpenStreetMap';
-            view.when(function() { signalReady(); }).catch(function(err) {
-              console.error('Map fallback failed:', err);
-              signalReady();
-            });
+            view.when(function() { signalReady(); }).catch(function() { signalReady(); });
           } catch (err) {
             console.error('Map init failed:', err);
             signalReady();
@@ -155,17 +153,19 @@
           }));
           routeLayer.add(new Graphic({
             geometry: line,
-            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 3, cap: 'round', join: 'round' })
+            symbol: new SimpleLineSymbol({ color: '#16A34A', width: 3, cap: 'round', join: 'round' })
           }));
 
-          var lngs = polyline.map(function(c) { return c[0]; });
-          var lats = polyline.map(function(c) { return c[1]; });
-          view.goTo(new Extent({
-            xmin: Math.min.apply(null, lngs) - 0.008,
-            ymin: Math.min.apply(null, lats) - 0.008,
-            xmax: Math.max.apply(null, lngs) + 0.008,
-            ymax: Math.max.apply(null, lats) + 0.008
-          }), { duration: 800 });
+          if (!followingTripId && !pendingFocusTripId && Date.now() >= routeZoomSuppressedUntil) {
+            var lngs = polyline.map(function(c) { return c[0]; });
+            var lats = polyline.map(function(c) { return c[1]; });
+            view.goTo(new Extent({
+              xmin: Math.min.apply(null, lngs) - 0.008,
+              ymin: Math.min.apply(null, lats) - 0.008,
+              xmax: Math.max.apply(null, lngs) + 0.008,
+              ymax: Math.max.apply(null, lats) + 0.008
+            }), { duration: 800 }).catch(function() {});
+          }
         }
 
         stops.forEach(function(stop, i) {
@@ -178,7 +178,7 @@
             attributes: stopAttrs,
             symbol: {
               type: 'picture-marker',
-              url: stopIconUrl(isOrigin ? '#38BDF8' : isDest ? '#F87171' : '#F59E0B'),
+              url: stopIconUrl(isOrigin ? '#16A34A' : isDest ? '#0A0A0A' : '#525252'),
               width: isOrigin || isDest ? '28px' : '24px',
               height: isOrigin || isDest ? '28px' : '24px'
             }
@@ -188,14 +188,14 @@
             attributes: stopAttrs,
             symbol: new TextSymbol({
               text: (i + 1) + '. ' + stop.name,
-              color: '#fff', haloColor: '#134E4A', haloSize: 2, yoffset: 18,
+              color: '#fff', haloColor: '#14532D', haloSize: 2, yoffset: 18,
               font: { size: 10, weight: 'bold' }
             })
           }));
         });
 
-        // Stops were recreated; rebuild the selection ring on the new graphics.
         applyHighlight(highlightStopId);
+        tryFocusVehicle();
       });
     }
 
@@ -215,28 +215,25 @@
             style: 'circle',
             size: 26,
             color: [3, 105, 161, 0.15],
-            outline: { color: '#0369A1', width: 3 }
+            outline: { color: '#16A34A', width: 3 }
           })
         });
         stopLayer.add(highlightGraphic);
-        if (view) {
+        if (view && !followingTripId) {
           view.goTo(
-            { center: target.geometry, zoom: Math.max(view.zoom, 17) },
+            { center: target.geometry, zoom: Math.max(view.zoom, 16) },
             { duration: 600 }
           ).catch(function() {});
         }
       });
     }
 
-    // Vehicles glide between position updates instead of jumping: each new
-    // position starts a ~4.5s tween (just under the 5s dashboard poll), so the
-    // marker arrives as the next update lands.
-    var vehicleMarkers = {}; // tripId -> { marker, label, lon, lat, connected, anim }
+    var vehicleMarkers = {};
     var VEHICLE_ANIM_MS = 4500;
     var vehicleAnimRunning = false;
-
-    // Stop markers and the vehicle are inline SVG badges, cached per key.
     var svgIconCache = {};
+    var routePath = null;
+
     function svgDataUri(svg) {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     }
@@ -258,55 +255,27 @@
       return svgIconCache[key];
     }
 
-    // Top-down bus drawn nose-up (windshield at the top), same visual language
-    // as the citizen app: the whole marker rotates through the symbol's angle
-    // so the bus points along its actual direction of travel — outbound AND on
-    // the return leg. White body + dark outline: white is the highest-contrast
-    // color against both the dark satellite imagery and the dark-teal route
-    // line the bus drives on, and no stop badge uses it.
-    var BUS_BODY = '#FFFFFF';
-    var BUS_DARK = '#0F172A';
-    function busIconUrl() {
-      var key = 'bus:' + BUS_BODY;
-      if (!svgIconCache[key]) {
-        svgIconCache[key] = svgDataUri(
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">' +
-          // side mirrors (stick out just behind the windshield)
-          '<rect x="12.8" y="13.4" width="6" height="3" rx="1.5" fill="' + BUS_DARK + '"/>' +
-          '<rect x="37.2" y="13.4" width="6" height="3" rx="1.5" fill="' + BUS_DARK + '"/>' +
-          // body
-          '<rect x="18.5" y="9" width="19" height="38" rx="6.5" fill="' + BUS_BODY + '" stroke="' + BUS_DARK + '" stroke-width="2.5"/>' +
-          // windshield (marks the nose)
-          '<rect x="21.8" y="13.2" width="12.4" height="5.6" rx="2.2" fill="#0F766E"/>' +
-          // roof hatch
-          '<rect x="22.4" y="22.5" width="11.2" height="13" rx="2.6" fill="rgba(15,23,42,0.14)"/>' +
-          // rear window
-          '<rect x="22.4" y="39" width="11.2" height="3.8" rx="1.7" fill="rgba(15,23,42,0.35)"/>' +
-          '</svg>'
-        );
-      }
-      return svgIconCache[key];
+    function carIconUrl() {
+      return '/nav-car-marker.png?v=5';
     }
 
     function vehicleSymbol(heading) {
       return {
         type: 'picture-marker',
-        url: busIconUrl(),
-        width: '40px', height: '40px',
+        url: carIconUrl(),
+        width: '72px',
+        height: '72px',
         angle: ((heading || 0) % 360 + 360) % 360
       };
     }
 
-    // Shortest-arc interpolation so the bus turns 350°->10° through north,
-    // not the long way around.
     function lerpHeading(a, b, p) {
       var d = ((b - a + 540) % 360) - 180;
       return (a + d * p + 360) % 360;
     }
-
-    // Direction of travel between two fixes; more reliable for icon
-    // orientation than GPS heading, which the driver app sends as 0 when
-    // the Doppler heading is unknown.
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
     function bearing(fromLon, fromLat, toLon, toLat) {
       var toRad = Math.PI / 180;
       var dLon = (toLon - fromLon) * toRad;
@@ -316,13 +285,6 @@
       return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     }
 
-    // The bus drives ALONG the route: when a bus sits on the drawn route
-    // polyline, its orientation comes from the polyline segment underneath
-    // it — the route geometry is exact at every angle, where GPS heading
-    // jitters and movement bearings wobble between close fixes. The travel
-    // bearing only picks the direction: same as the segment when outbound,
-    // flipped 180° when the bus is coming back along the route.
-    var routePath = null; // [[lon,lat], ...] of the currently drawn route
     function routeSnappedHeading(lon, lat, travelHdg) {
       if (!routePath || routePath.length < 2) return null;
       var cosLat = Math.cos(lat * Math.PI / 180);
@@ -333,8 +295,6 @@
         var d = dx * dx + dy * dy;
         if (d < bestD) { bestD = d; best = i; }
       }
-      // Only snap buses actually on this route (~60 m); others (different
-      // route, deadheading cross-town) keep their movement bearing.
       if (bestD > 3e-7) return null;
       var fromIdx = Math.min(best, routePath.length - 2);
       var from = routePath[fromIdx];
@@ -356,9 +316,22 @@
     function vehicleLabelSymbol(plate, connected) {
       return {
         type: 'text', text: plate, color: '#fff',
-        haloColor: connected ? '#0F766E' : '#B91C1C', haloSize: 2,
-        yoffset: -24, font: { size: 11, weight: 'bold' }
+        haloColor: connected ? '#14532D' : '#0A0A0A', haloSize: 2,
+        yoffset: -40, font: { size: 11, weight: 'bold' }
       };
+    }
+
+    // Smooth camera: center on the car at street zoom. Throttled so ArcGIS
+    // isn't flooded with goTo/center writes every animation frame.
+    function syncNavCamera(lon, lat, hdg, force) {
+      if (!view || !followingTripId) return;
+      var now = Date.now();
+      if (!force && now - lastCamFollowAt < 320) return;
+      lastCamFollowAt = now;
+      view.goTo(
+        { center: [lon, lat], zoom: Math.max(view.zoom || NAV_ZOOM, NAV_ZOOM) },
+        { duration: force ? 850 : 280, easing: 'ease-out' }
+      ).catch(function() {});
     }
 
     function vehicleAnimTick() {
@@ -367,22 +340,32 @@
       Object.keys(vehicleMarkers).forEach(function(id) {
         var e = vehicleMarkers[id];
         if (!e.anim) return;
-        var p = Math.min(1, (now - e.anim.start) / VEHICLE_ANIM_MS);
+        var raw = Math.min(1, (now - e.anim.start) / VEHICLE_ANIM_MS);
+        var p = easeInOut(raw);
         var lon = e.anim.fromLon + (e.anim.toLon - e.anim.fromLon) * p;
         var lat = e.anim.fromLat + (e.anim.toLat - e.anim.fromLat) * p;
         var hdg = lerpHeading(e.anim.fromHdg, e.anim.toHdg, p);
         var geom = { type: 'point', longitude: lon, latitude: lat };
         e.marker.geometry = geom;
-        // Re-symbol only when the angle meaningfully changes (2° buckets) so
-        // straight runs don't churn symbols every frame.
         if (Math.round(hdg / 2) !== Math.round(e.hdg / 2)) {
           e.marker.symbol = vehicleSymbol(hdg);
         }
         e.label.geometry = geom;
         e.lon = lon; e.lat = lat; e.hdg = hdg;
-        if (p < 1) any = true; else e.anim = null;
+        if (followingTripId === id) {
+          syncNavCamera(lon, lat, hdg, false);
+        }
+        if (raw < 1) any = true; else e.anim = null;
       });
-      if (any) { requestAnimationFrame(vehicleAnimTick); } else { vehicleAnimRunning = false; }
+      if (any) {
+        requestAnimationFrame(vehicleAnimTick);
+      } else {
+        vehicleAnimRunning = false;
+        if (followingTripId && vehicleMarkers[followingTripId]) {
+          var fe = vehicleMarkers[followingTripId];
+          syncNavCamera(fe.lon, fe.lat, fe.hdg, false);
+        }
+      }
     }
 
     function drawVehicles(tracking) {
@@ -390,13 +373,12 @@
       require(['esri/Graphic'], function(Graphic) {
         var seen = {};
         (tracking || []).forEach(function(t) {
+          if (t.longitude == null || t.latitude == null) return;
           seen[t.trip_id] = true;
           var connected = !!t.gps_connected;
           var e = vehicleMarkers[t.trip_id];
           if (!e) {
             var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
-            // Route orientation from the very first paint when possible —
-            // GPS heading is often 0 ("unknown") at trip start.
             var initHdg = routeSnappedHeading(t.longitude, t.latitude, t.heading || null);
             if (initHdg == null) initHdg = t.heading || 0;
             var marker = new Graphic({
@@ -404,7 +386,11 @@
               symbol: vehicleSymbol(initHdg),
               attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
             });
-            var label = new Graphic({ geometry: geom, symbol: vehicleLabelSymbol(t.vehicle_plate, connected) });
+            var label = new Graphic({
+              geometry: geom,
+              symbol: vehicleLabelSymbol(t.vehicle_plate, connected),
+              attributes: { tripId: t.trip_id }
+            });
             vehicleLayer.addMany([marker, label]);
             vehicleMarkers[t.trip_id] = {
               marker: marker, label: label,
@@ -412,38 +398,33 @@
               travelHdg: t.heading || null,
               connected: connected, anim: null
             };
-            if (focusTripId === t.trip_id) {
-              flyToVehicle(t.longitude, t.latitude);
-              focusTripId = null;
+            if (pendingFocusTripId === t.trip_id || followingTripId === t.trip_id) {
+              tryFocusVehicle();
             }
             return;
           }
-          // GPS status lives in the plate label halo (the bus image itself
-          // is a fixed illustration): teal when connected, red when it drops.
           if (connected !== e.connected) {
             e.label.symbol = vehicleLabelSymbol(t.vehicle_plate, connected);
           }
           e.connected = connected;
-          // Direction of travel: movement between fixes once the bus has
-          // moved a few metres (GPS heading is 0 when unknown); it persists
-          // while the bus dwells so the icon doesn't spin at stops.
+
           var movedMeters = Math.hypot(
             (t.latitude - e.lat) * 111320,
             (t.longitude - e.lon) * 111320 * Math.cos(t.latitude * Math.PI / 180)
           );
-          if (movedMeters > 8) {
+          if (movedMeters > 6) {
             e.travelHdg = bearing(e.lon, e.lat, t.longitude, t.latitude);
           } else if (e.travelHdg == null && t.heading) {
             e.travelHdg = t.heading;
           }
-          // Orientation: the route polyline under the bus wins (exact at
-          // every angle, correct outbound and on the return leg — the travel
-          // bearing picks which way along the route); movement bearing when
-          // off the drawn route; last angle while stationary.
+
           var snapped = routeSnappedHeading(t.longitude, t.latitude, e.travelHdg);
           var newHdg = snapped != null ? snapped : (e.travelHdg != null ? e.travelHdg : e.hdg);
-          // Teleports (trip restart, long GPS gap) snap instead of gliding
-          // across the city. ~0.01° ≈ 1km.
+          if (movedMeters < 4) {
+            var hDelta = Math.abs(((newHdg - e.hdg + 540) % 360) - 180);
+            if (hDelta < 5) newHdg = e.hdg;
+          }
+
           var far = Math.abs(t.longitude - e.lon) + Math.abs(t.latitude - e.lat) > 0.01;
           if (far) {
             var snapGeom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
@@ -452,6 +433,7 @@
             e.label.geometry = snapGeom;
             e.lon = t.longitude; e.lat = t.latitude; e.hdg = newHdg;
             e.anim = null;
+            if (followingTripId === t.trip_id) syncNavCamera(e.lon, e.lat, e.hdg, true);
           } else {
             e.anim = {
               start: Date.now(),
@@ -466,20 +448,44 @@
         });
         Object.keys(vehicleMarkers).forEach(function(id) {
           if (!seen[id]) {
-            var e = vehicleMarkers[id];
-            vehicleLayer.removeMany([e.marker, e.label]);
+            var gone = vehicleMarkers[id];
+            vehicleLayer.removeMany([gone.marker, gone.label]);
             delete vehicleMarkers[id];
+            if (followingTripId === id) followingTripId = null;
           }
         });
       });
     }
 
-    function flyToVehicle(lon, lat) {
-      if (!view) return;
-      view.goTo(
-        { center: [lon, lat], zoom: Math.max(view.zoom, 17) },
-        { duration: 700 }
-      ).catch(function() {});
+    function startFollow(tripId, forceZoom) {
+      if (!tripId) {
+        followingTripId = null;
+        pendingFocusTripId = null;
+        return;
+      }
+      followingTripId = tripId;
+      pendingFocusTripId = tripId;
+      routeZoomSuppressedUntil = Date.now() + 5000;
+      var fe = vehicleMarkers[tripId];
+      if (fe) {
+        pendingFocusTripId = null;
+        lastCamFollowAt = 0;
+        syncNavCamera(fe.lon, fe.lat, fe.hdg, true);
+      } else if (forceZoom) {
+        // Vehicle not drawn yet — keep pending until setTracking arrives.
+      }
+    }
+
+    function tryFocusVehicle() {
+      var id = pendingFocusTripId || followingTripId;
+      if (!id || !view) return false;
+      var fe = vehicleMarkers[id];
+      if (!fe) return false;
+      followingTripId = id;
+      pendingFocusTripId = null;
+      lastCamFollowAt = 0;
+      syncNavCamera(fe.lon, fe.lat, fe.hdg, true);
+      return true;
     }
 
     window.addEventListener('message', function(event) {
@@ -489,14 +495,37 @@
       if (data.type === 'setTracking') drawVehicles(data.tracking);
       if (data.type === 'setHighlightStop') applyHighlight(data.stopId);
       if (data.type === 'followVehicle') {
-        focusTripId = data.tripId || null;
-        if (focusTripId) {
-          var fe = vehicleMarkers[focusTripId];
-          if (fe) { flyToVehicle(fe.lon, fe.lat); focusTripId = null; }
-        }
+        startFollow(data.tripId || null, true);
       }
-      if (data.type === 'setCenter' && view) {
-        view.goTo({ center: [data.longitude, data.latitude], zoom: data.zoom || 15 });
+      if (data.type === 'setCenter' && view && !followingTripId) {
+        view.goTo({
+          center: [data.longitude, data.latitude],
+          zoom: data.zoom || 15
+        }).catch(function() {});
+      }
+      if (data.type === 'fitBounds' && view && data.points && data.points.length) {
+        followingTripId = null;
+        pendingFocusTripId = null;
+        require(['esri/geometry/Extent', 'esri/geometry/Point'], function(Extent, Point) {
+          if (data.points.length === 1) {
+            var p = data.points[0];
+            view.goTo(
+              { center: [p.longitude, p.latitude], zoom: 16 },
+              { duration: 800 }
+            ).catch(function() {});
+            return;
+          }
+          var lngs = data.points.map(function(pt) { return pt.longitude; });
+          var lats = data.points.map(function(pt) { return pt.latitude; });
+          var pad = 0.01;
+          view.goTo(new Extent({
+            xmin: Math.min.apply(null, lngs) - pad,
+            ymin: Math.min.apply(null, lats) - pad,
+            xmax: Math.max.apply(null, lngs) + pad,
+            ymax: Math.max.apply(null, lats) + pad,
+            spatialReference: { wkid: 4326 }
+          }), { duration: 800 }).catch(function() {});
+        });
       }
     });
 

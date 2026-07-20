@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@400;500;600;700;800&family=Work+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -25,7 +25,7 @@
   a,
   input,
   select {
-    @apply transition-colors duration-200 ease-smooth;
+    @apply transition-[color,background-color,border-color,box-shadow,transform,opacity] duration-200 ease-smooth;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -40,24 +40,20 @@
 
 @layer components {
   .num {
-    @apply tabular-nums tracking-tight;
+    @apply font-data tabular-nums tracking-tight;
   }
 
-  /* Soft panel container — same language as the BTS ops section backgrounds */
   .section-bg {
-    @apply bg-muted-bg;
+    @apply bg-white/95 backdrop-blur-md;
   }
 
+  /* Docked panels — soft white surfaces */
   .sheet {
-    @apply relative overflow-hidden border border-line bg-canvas shadow-sheet;
-  }
-
-  .sheet::before {
-    content: none;
+    @apply relative overflow-hidden border border-line/60 bg-white/95 shadow-sheet backdrop-blur-sm;
   }
 
   .glass {
-    @apply border border-line bg-white shadow-glass;
+    @apply border border-line/50 bg-white/90 shadow-card backdrop-blur-sm;
   }
 
   .spinner {
@@ -65,46 +61,139 @@
   }
 
   .pressable {
-    @apply cursor-pointer transition-[transform,box-shadow,background-color,border-color] duration-200 ease-smooth active:scale-[0.985];
+    @apply cursor-pointer transition-[transform,box-shadow,background-color,border-color,opacity]
+      duration-200 ease-smooth active:scale-[0.988];
   }
 
   .stat-strip {
-    @apply flex items-center gap-2 rounded-2xl border border-line bg-white/60 px-2 py-2;
+    @apply flex items-center gap-1 rounded-2xl border border-line/50 bg-muted-bg/80 px-1.5 py-1.5;
   }
 
   .stat-strip__item {
-    @apply flex flex-col items-center gap-0.5 rounded-xl bg-white px-4 py-2 shadow-card;
+    @apply flex min-w-[3.25rem] flex-col items-center gap-0.5 rounded-xl bg-white px-3 py-1.5
+      shadow-card transition-[background-color,box-shadow,transform] duration-200 ease-smooth;
   }
 
   .heading-banner {
-    @apply flex items-start gap-2 rounded-2xl border border-primary/15 bg-muted-bg px-3.5 py-2.5 text-[0.9375rem] font-semibold leading-snug text-ink;
+    @apply flex items-start gap-2 rounded-xl border border-primary/10 bg-primary-soft/50 px-3 py-2
+      text-[0.8125rem] font-semibold leading-snug text-ink;
   }
 
   .mint-card {
-    @apply rounded-2xl border border-primary/10 bg-gradient-to-b from-muted-bg to-white px-3 py-2.5 shadow-card;
+    @apply rounded-2xl border border-primary/10 bg-primary-soft/35 px-3 py-2.5;
+  }
+
+  .metric-card {
+    @apply rounded-xl border border-line/60 bg-muted-bg px-2.5 py-2;
   }
 
   .sheet-handle {
-    @apply mx-auto mb-1 mt-2 h-1 w-10 shrink-0 rounded-full bg-line;
+    @apply mx-auto mb-1 mt-2.5 h-1 w-9 shrink-0 rounded-full bg-line/80;
   }
 
   .brand-mark {
-    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-light to-primary text-white shadow-card;
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-card;
+  }
+
+  .status-pill {
+    @apply inline-flex max-w-full items-center gap-1.5 whitespace-normal rounded-full py-0.5 pl-2 pr-2.5
+      text-[0.6875rem] font-semibold leading-tight;
+  }
+
+  .fleet-row {
+    @apply pressable relative w-full border-b border-line/50 px-3.5 py-2.5 text-left
+      focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary;
+  }
+
+  .fleet-row--selected {
+    @apply bg-primary-soft/60;
+  }
+
+  .fleet-row--selected::before {
+    content: '';
+    @apply absolute inset-y-0 left-0 w-[3px] bg-primary;
+  }
+
+  /* Quiet divider used inside dense panels */
+  .hairline {
+    @apply border-t border-line/50;
   }
 }
 
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #a7d4cb transparent;
+    scrollbar-color: #86efac transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
-    width: 5px;
+    width: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #a7d4cb;
+    background: #86efac;
     border-radius: 999px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #4ade80;
+  }
+}
+
+/* Landing — Soft UI Evolution atmosphere + scroll reveals */
+.landing-reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.landing-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.landing-reveal-delay-1 {
+  transition-delay: 80ms;
+}
+.landing-reveal-delay-2 {
+  transition-delay: 160ms;
+}
+.landing-reveal-delay-3 {
+  transition-delay: 240ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+.landing-bus {
+  offset-path: path('M80 620 C 220 580, 280 420, 420 380 S 620 340, 720 260 S 920 140, 1120 100');
+  offset-rotate: auto;
+  animation: landing-bus-glide 14s linear infinite;
+}
+
+@keyframes landing-bus-glide {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-bus {
+    animation: none;
+    offset-distance: 55%;
   }
 }

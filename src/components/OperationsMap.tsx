@@ -22,11 +22,15 @@ interface OperationsMapProps {
   };
   onVehicleClick?: (tripId: string) => void;
   /** Fired when the user clicks a stop marker on the map. */
-  onStopClick?: (stop: { id: string; name: string }) => void;
+  onStopClick?: (stop: { id: string; name: string; longitude?: number; latitude?: number }) => void;
   /** Stop id to draw a selection ring around; null clears it. */
   highlightStopId?: string | null;
   /** Trip whose bus the camera should zoom to and follow; null releases it. */
   followTripId?: string | null;
+  /** Points to fit when `fitKey` changes (e.g. header Active / Delayed click). */
+  fitPoints?: { longitude: number; latitude: number }[];
+  /** Increment to re-trigger fitBounds even if points are unchanged. */
+  fitKey?: number;
 }
 
 /**
@@ -40,6 +44,8 @@ export function OperationsMap({
   onStopClick,
   highlightStopId,
   followTripId,
+  fitPoints,
+  fitKey = 0,
 }: OperationsMapProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -68,7 +74,14 @@ export function OperationsMap({
       }
       if (event.data?.type === 'stopClick' && onStopClick) {
         if (typeof event.data.stopId === 'string' && typeof event.data.name === 'string') {
-          onStopClick({ id: event.data.stopId, name: event.data.name });
+          onStopClick({
+            id: event.data.stopId,
+            name: event.data.name,
+            longitude:
+              typeof event.data.longitude === 'number' ? event.data.longitude : undefined,
+            latitude:
+              typeof event.data.latitude === 'number' ? event.data.latitude : undefined,
+          });
         }
       }
     };
@@ -115,6 +128,15 @@ export function OperationsMap({
       '*'
     );
   }, [mapReady, followTripId]);
+
+  useEffect(() => {
+    if (!mapReady || !iframeRef.current?.contentWindow || !fitKey) return;
+    if (!fitPoints?.length) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'fitBounds', points: fitPoints },
+      '*'
+    );
+  }, [mapReady, fitKey, fitPoints]);
 
   return (
     <div className="absolute inset-0 h-full w-full">

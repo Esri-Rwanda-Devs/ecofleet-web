@@ -123,7 +123,7 @@ export function AlertsFeed({ alerts }: { alerts: AlertEvent[] }) {
 
       {open && (
         <div
-          className="absolute right-0 top-[calc(100%+10px)] w-80 overflow-hidden sheet animate-sheet-in"
+          className="absolute right-0 top-[calc(100%+10px)] w-80 overflow-hidden sheet animate-sheet-in rounded-sheet"
           role="dialog"
           aria-label="Notifications"
         >
@@ -135,7 +135,7 @@ export function AlertsFeed({ alerts }: { alerts: AlertEvent[] }) {
               No alerts yet — delay reports and trip events appear here live.
             </p>
           ) : (
-            <ul className="scrollbar-thin max-h-96 list-none overflow-y-auto py-1">
+            <ul className="scrollbar-thin max-h-96 list-none overflow-y-auto py-1" aria-live="polite">
               {[...alerts].reverse().map((a) => {
                 const meta = CHANNEL_META[a.channel] ?? {
                   title: a.channel,

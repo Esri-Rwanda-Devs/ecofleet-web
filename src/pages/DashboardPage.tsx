@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { getSocket } from '../services/socket';
 import {
@@ -14,7 +15,7 @@ import {
   BusIcon,
   SearchIcon,
 } from '../components/Icons';
-import { formatRouteName } from '../utils/display-names';
+import { formatRouteName, formatStopName } from '../utils/display-names';
 import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geometry';
 import { ArcGisConfig, BusStop, FleetOverview, Route, TripTrackingState } from '../types';
 
@@ -24,6 +25,14 @@ const POLL_MS = 5000;
 const RECONCILE_MS = 30000;
 /** Fleet overview refresh (server caches it for 15s). */
 const OVERVIEW_MS = 30000;
+
+/** True when a trip serves a stop whose display name matches `q` (lowercase). */
+function tripServesStopQuery(t: TripTrackingState, q: string, routeStops?: BusStop[]): boolean {
+  if (formatStopName(t.next_stop_name).toLowerCase().includes(q)) return true;
+  if (t.stop_etas?.some((s) => formatStopName(s.stop_name).toLowerCase().includes(q))) return true;
+  if (routeStops?.some((s) => formatStopName(s.name).toLowerCase().includes(q))) return true;
+  return false;
+}
 
 /** Live wall clock for the top bar — one quiet line. */
 function ClockNow() {
@@ -44,22 +53,41 @@ function StatItem({
   value,
   tone = 'neutral',
   className = '',
+  active = false,
+  onClick,
 }: {
   label: string;
   value: string | number;
   tone?: 'neutral' | 'danger' | 'success';
   className?: string;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   const valueCls =
     tone === 'danger' ? 'text-danger' : tone === 'success' ? 'text-success' : 'text-ink';
-  return (
-    <div className={`stat-strip__item ${className}`}>
+  const content = (
+    <>
       <b className={`num text-[1.125rem] font-bold leading-none ${valueCls}`}>{value}</b>
       <span className="text-[0.75rem] font-semibold uppercase tracking-[0.06em] text-muted">
         {label}
       </span>
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        className={`stat-strip__item pressable cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+          active ? 'bg-primary-soft shadow-focus-primary' : 'hover:bg-muted-bg'
+        } ${className}`}
+      >
+        {content}
+      </button>
+    );
+  }
+  return <div className={`stat-strip__item ${className}`}>{content}</div>;
 }
 
 async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; stops: BusStop[] }> {
@@ -112,23 +140,105 @@ export function DashboardPage() {
   const [socketLive, setSocketLive] = useState(false);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [query, setQuery] = useState('');
+  /** Header number click: filter map to active fleet or delayed only, then zoom. */
+  const [statFocus, setStatFocus] = useState<'active' | 'delayed' | null>(null);
+  const [fitBoundsKey, setFitBoundsKey] = useState(0);
+  /** When set, camera fit uses these points instead of the filtered fleet. */
+  const [fitOverride, setFitOverride] = useState<
+    { longitude: number; latitude: number }[] | null
+  >(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const alertIdRef = useRef(0);
+  const routesRef = useRef<Route[]>([]);
+  const trackingRef = useRef<TripTrackingState[]>([]);
+  const routeStopsRef = useRef<Map<string, BusStop[]>>(new Map());
+  const visitedRef = useRef<Map<string, Set<string>>>(new Map());
 
   const selectedTrip = tracking.find((t) => t.trip_id === selectedTripId) || null;
   const delayedCount = tracking.filter((t) => t.is_delayed).length;
   const [detailStops, setDetailStops] = useState<BusStop[]>();
 
+  const searchQuery = query.trim().toLowerCase();
+
+  /** Fleet + map filter: buses that serve a stop matching the search. */
+  const filteredTracking = useMemo(() => {
+    if (!searchQuery) return tracking;
+    return tracking.filter((t) =>
+      tripServesStopQuery(t, searchQuery, routeStopsRef.current.get(t.route_name))
+    );
+  }, [tracking, searchQuery]);
+
+  /** Apply header stat focus (active / delayed) on top of stop search. */
+  const mapTracking = useMemo(() => {
+    if (statFocus === 'delayed') return filteredTracking.filter((t) => t.is_delayed);
+    return filteredTracking;
+  }, [filteredTracking, statFocus]);
+
+  const fitPoints = useMemo(() => {
+    if (fitOverride?.length) return fitOverride;
+    return mapTracking
+      .filter((t) => Number.isFinite(t.longitude) && Number.isFinite(t.latitude))
+      .map((t) => ({ longitude: t.longitude, latitude: t.latitude }));
+  }, [fitOverride, mapTracking]);
+
+  const focusStat = useCallback((kind: 'active' | 'delayed') => {
+    setFitOverride(null);
+    setStatFocus(kind);
+    setSelectedTripId(undefined);
+    setSelectedStop(null);
+    setFitBoundsKey((k) => k + 1);
+  }, []);
+
+  /** Zoom + highlight a bus stop (timeline number or map marker). */
+  const focusStopOnMap = useCallback(
+    (stop: { id: string; name: string; longitude?: number; latitude?: number }) => {
+      setSelectedStop({ id: stop.id, name: stop.name });
+      let lng = stop.longitude;
+      let lat = stop.latitude;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        const fromRoute =
+          detailStops?.find((s) => s.id === stop.id) ??
+          routeDisplay?.stops?.find((s) => s.id === stop.id);
+        lng = fromRoute?.longitude;
+        lat = fromRoute?.latitude;
+      }
+      if (Number.isFinite(lng) && Number.isFinite(lat)) {
+        setFitOverride([{ longitude: lng as number, latitude: lat as number }]);
+        setFitBoundsKey((k) => k + 1);
+      }
+    },
+    [detailStops, routeDisplay]
+  );
+
+  /** Map route markers: when searching, only show matching stops. */
+  const mapRouteDisplay = useMemo(() => {
+    if (!routeDisplay) return routeDisplay;
+    if (!searchQuery || !routeDisplay.stops?.length) return routeDisplay;
+    const matched = routeDisplay.stops.filter((s) =>
+      formatStopName(s.name).toLowerCase().includes(searchQuery)
+    );
+    return matched.length > 0 ? { ...routeDisplay, stops: matched } : routeDisplay;
+  }, [routeDisplay, searchQuery]);
+
+  /** Prefer highlighting the first stop that matches the search on the map route. */
+  const searchHighlightStopId = useMemo(() => {
+    if (!searchQuery || !mapRouteDisplay?.stops?.length) return null;
+    return mapRouteDisplay.stops[0]?.id ?? null;
+  }, [searchQuery, mapRouteDisplay]);
+
+  // Drop selection if the trip no longer matches stop search / stat filter.
+  useEffect(() => {
+    if (!selectedTripId) return;
+    if (!mapTracking.some((t) => t.trip_id === selectedTripId)) {
+      setSelectedTripId(undefined);
+    }
+  }, [mapTracking, selectedTripId]);
+
   // Client-side arrival truth (mirrors the mobile app): stops each bus has
   // genuinely been near, plus cached stop lists per route name.
-  const routesRef = useRef<Route[]>([]);
-  // Mirror of the live list for alert-label resolution outside React's flow.
-  const trackingRef = useRef<TripTrackingState[]>([]);
   useEffect(() => {
     trackingRef.current = tracking;
   }, [tracking]);
-  const routeStopsRef = useRef<Map<string, BusStop[]>>(new Map());
-  const visitedRef = useRef<Map<string, Set<string>>>(new Map());
 
   const stopsForRouteName = useCallback(async (routeName: string) => {
     const cached = routeStopsRef.current.get(routeName);
@@ -210,7 +320,9 @@ export function DashboardPage() {
   // The map follows the live operation: it always shows the route of the
   // selected trip, or of the first active trip when nothing is selected —
   // so a return trip's route appears the moment the driver starts it.
-  const mapRouteName = selectedTrip?.route_name ?? tracking[0]?.route_name;
+  // When searching by stop, prefer the first trip that serves that stop.
+  const mapRouteName =
+    selectedTrip?.route_name ?? mapTracking[0]?.route_name ?? tracking[0]?.route_name;
   const routeDisplayCacheRef = useRef<Map<string, { polyline?: number[][]; stops: BusStop[] }>>(
     new Map()
   );
@@ -358,41 +470,48 @@ export function DashboardPage() {
 
   if (!config) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-5 bg-canvas">
-        <div className="brand-mark h-12 w-12 shadow-panel">
-          <BusIcon size={20} />
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-canvas">
+        <div className="brand-mark h-11 w-11 shadow-panel">
+          <BusIcon size={18} />
         </div>
-        <div className="spinner h-8 w-8" role="status" aria-label="Loading" />
-        <p className="text-[1rem] font-medium text-muted">Loading operations map…</p>
+        <div className="spinner h-7 w-7" role="status" aria-label="Loading" />
+        <p className="text-[0.8125rem] font-medium text-muted">Loading operations map…</p>
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-[#E7F0ED]">
+    <div className="relative flex h-screen flex-col overflow-hidden bg-canvas">
       <header className="relative z-30 shrink-0">
-        <div className="pointer-events-auto section-bg flex min-h-[4.25rem] flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-2.5 md:px-5">
-          <div className="flex max-w-[min(100%,24rem)] items-center gap-2.5 rounded-xl bg-white px-2 py-1.5 shadow-card">
-            <div className="brand-mark">
-              <BusIcon size={15} />
-            </div>
-            <div className="min-w-0 leading-tight">
-              <h1 className="truncate text-[1.125rem] font-bold tracking-tight text-ink">
-                BTS Operations
-              </h1>
-              <p className="truncate text-[0.8125rem] font-medium text-muted">
-                Kigali · Real-Time Command
-              </p>
-            </div>
+        <div className="pointer-events-auto section-bg flex min-h-[4rem] flex-wrap items-center justify-between gap-3 border-b border-line/50 px-4 py-2 md:px-5">
+          <div className="flex max-w-[min(100%,24rem)] items-center gap-2.5">
+            <Link
+              to="/"
+              className="pressable group flex min-w-0 items-center gap-2.5 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              aria-label="Back to landing page"
+              title="Back to home"
+            >
+              <div className="brand-mark">
+                <BusIcon size={15} />
+              </div>
+              <div className="min-w-0 leading-tight">
+                <h1 className="truncate text-[1.0625rem] font-bold tracking-tight text-ink group-hover:text-primary">
+                  BTS Operations
+                </h1>
+                <p className="truncate text-[0.75rem] font-medium text-muted">
+                  Kigali · Real-Time Command
+                </p>
+              </div>
+            </Link>
             <span
-              className={`ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.8125rem] font-bold ${
-                socketLive ? 'bg-success-bg text-success' : 'bg-muted-bg text-muted'
+              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.75rem] font-bold ${
+                socketLive ? 'bg-success-bg text-success' : 'bg-stale-bg text-stale'
               }`}
               role="status"
             >
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  socketLive ? 'animate-pulse-dot bg-success' : 'bg-muted'
+                  socketLive ? 'animate-pulse-dot bg-success' : 'bg-stale'
                 }`}
                 aria-hidden="true"
               />
@@ -402,11 +521,18 @@ export function DashboardPage() {
 
           <div className="hidden xl:block">
             <div className="stat-strip">
-              <StatItem label="active" value={tracking.length} />
+              <StatItem
+                label="active"
+                value={tracking.length}
+                active={statFocus === 'active'}
+                onClick={() => focusStat('active')}
+              />
               <StatItem
                 label="delayed"
                 value={delayedCount}
                 tone={delayedCount > 0 ? 'danger' : 'success'}
+                active={statFocus === 'delayed'}
+                onClick={() => focusStat('delayed')}
               />
               <StatItem label="routes" value={routes.length} />
               <StatItem label="available" value={overview?.buses_available ?? '—'} />
@@ -419,7 +545,7 @@ export function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="relative hidden items-center rounded-xl bg-white shadow-card sm:flex">
+            <label className="relative hidden items-center rounded-2xl border border-line/50 bg-muted-bg/60 transition-[border-color,box-shadow] duration-200 ease-smooth focus-within:border-primary/30 focus-within:bg-white focus-within:shadow-card sm:flex">
               <SearchIcon
                 size={15}
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
@@ -435,21 +561,21 @@ export function DashboardPage() {
                   }
                 }}
                 type="search"
-                placeholder="Search plate or route"
-                aria-label="Search fleet"
-                className="h-10 w-48 rounded-xl bg-transparent pl-9 pr-8 text-[0.9375rem] font-medium text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/20 lg:w-60"
+                placeholder="Search bus stop"
+                aria-label="Search bus stop"
+                className="h-10 w-52 rounded-2xl bg-transparent pl-9 pr-8 text-[0.9375rem] font-medium text-ink placeholder:text-muted focus:outline-none lg:w-64"
               />
               <kbd
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-muted-bg px-1.5 py-0.5 text-[12px] font-bold text-muted"
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-white/80 px-1.5 py-0.5 text-[11px] font-bold text-muted"
                 aria-hidden="true"
               >
                 /
               </kbd>
             </label>
 
-            <div className="flex items-center gap-0.5 rounded-xl bg-white p-1 pl-1.5 shadow-card">
+            <div className="flex items-center gap-0.5 rounded-2xl border border-line/50 bg-muted-bg/60 p-1 pl-1.5">
               <AlertsFeed alerts={alerts} />
-              <span className="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden="true" />
+              <span className="mx-1 hidden h-5 w-px bg-line/70 sm:block" aria-hidden="true" />
               <span className="hidden px-2.5 sm:block">
                 <ClockNow />
               </span>
@@ -462,12 +588,14 @@ export function DashboardPage() {
         <div className="absolute inset-0">
           <OperationsMap
             config={config}
-            tracking={tracking}
-            selectedRoute={routeDisplay}
+            tracking={mapTracking}
+            selectedRoute={mapRouteDisplay}
             onVehicleClick={setSelectedTripId}
-            onStopClick={setSelectedStop}
-            highlightStopId={selectedStop?.id ?? null}
+            onStopClick={focusStopOnMap}
+            highlightStopId={selectedStop?.id ?? searchHighlightStopId}
             followTripId={selectedTripId ?? null}
+            fitPoints={fitPoints}
+            fitKey={fitBoundsKey}
           />
         </div>
 
@@ -479,8 +607,10 @@ export function DashboardPage() {
         >
           <div className="sheet-handle md:hidden" aria-hidden="true" />
           <FleetPanel
-            tracking={tracking}
+            tracking={mapTracking}
             query={query}
+            totalFleetCount={tracking.length}
+            delayedFilter={statFocus === 'delayed'}
             selectedTripId={selectedTripId}
             onSelectTrip={(tripId) =>
               setSelectedTripId((prev) => (prev === tripId ? undefined : tripId))
@@ -492,6 +622,7 @@ export function DashboardPage() {
           <TripDetailPanel
             trip={selectedTrip}
             routeStops={detailStops}
+            onStopNumberClick={focusStopOnMap}
             onClose={() => setSelectedTripId(undefined)}
           />
         )}
@@ -499,7 +630,7 @@ export function DashboardPage() {
         {selectedStop && (
           <StopArrivalsCard
             stop={selectedStop}
-            tracking={tracking}
+            tracking={mapTracking}
             onClose={() => setSelectedStop(null)}
           />
         )}

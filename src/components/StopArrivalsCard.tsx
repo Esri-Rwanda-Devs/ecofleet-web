@@ -136,15 +136,15 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
       role="dialog"
       aria-label={`Arrivals at ${stop.name}`}
     >
-      <div className="mb-3 flex items-start justify-between gap-2">
+      <div className="mb-3.5 flex items-start justify-between gap-2">
         <div>
-          <p className="text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-muted">
+          <p className="text-[0.75rem] font-semibold uppercase tracking-[0.07em] text-muted">
             Arrivals
           </p>
-          <h3 className="mt-0.5 text-[1.1875rem] font-bold tracking-tight text-ink">{stop.name}</h3>
+          <h3 className="mt-0.5 text-[1.125rem] font-bold tracking-tight text-ink">{stop.name}</h3>
         </div>
         <button
-          className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line/80 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           onClick={onClose}
           aria-label="Close stop details"
         >
@@ -163,7 +163,7 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
           {sorted.length === 0 ? (
             <p className="py-1 text-body text-muted">No buses heading to this stop right now</p>
           ) : (
-            <ul className="scrollbar-thin flex max-h-[260px] list-none flex-col gap-1 overflow-y-auto">
+            <ul className="scrollbar-thin flex max-h-[260px] list-none flex-col gap-1.5 overflow-y-auto">
               {sorted.map((arrival) => {
                 const delaySec =
                   arrival.live_delay_seconds ?? arrival.delay_minutes * 60;
@@ -173,9 +173,9 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                 return (
                   <li
                     key={arrival.trip_id}
-                    className="flex items-center justify-between gap-2 rounded-2xl bg-muted-bg p-3"
+                    className="flex items-center justify-between gap-2 rounded-2xl border border-line/40 bg-muted-bg/60 px-3 py-2.5 transition-colors duration-200"
                   >
-                    <div className="flex min-w-0 flex-col gap-[3px]">
+                    <div className="flex min-w-0 flex-col gap-0.5">
                       <span
                         className="break-words text-[0.9375rem] font-bold leading-snug text-ink"
                         title={arrival.route_name}
@@ -188,10 +188,10 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                         </span>
                         {!departed && (
                           <span
-                            className={`rounded-full px-2 py-0.5 text-[0.75rem] font-semibold ${
+                            className={`rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold ${
                               atStation
                                 ? 'bg-success-bg text-success'
-                                : 'bg-muted-bg text-primary'
+                                : 'bg-primary-soft text-primary'
                             }`}
                           >
                             {STATUS_LABELS[arrival.status] ?? arrival.status}
@@ -199,16 +199,16 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                         )}
                       </span>
                       {!atStation && !departed && (
-                        <span className="num break-words text-[0.8125rem] leading-snug text-muted">
+                        <span className="num break-words text-[0.75rem] leading-snug text-muted">
                           {arrival.distance_meters != null &&
                             `${formatDistance(arrival.distance_meters)} away · `}
                           arrives ~{formatClock(arrival.eta_seconds)}
                         </span>
                       )}
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-[3px]">
+                    <div className="flex shrink-0 flex-col items-end gap-0.5">
                       <span
-                        className={`num whitespace-nowrap text-[1.0625rem] ${
+                        className={`num whitespace-nowrap text-[1rem] ${
                           departed ? 'font-semibold text-muted' : 'font-bold text-ink'
                         }`}
                       >
@@ -220,10 +220,10 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                       </span>
                       {delayMins >= 1 && (
                         <span
-                          className={`num whitespace-nowrap rounded-full px-2 py-px text-[0.8125rem] font-bold ${
+                          className={`num whitespace-nowrap rounded-full px-2 py-px text-[0.75rem] font-bold ${
                             delaySec > 0
                               ? 'bg-danger-bg text-danger'
-                              : 'bg-warning-bg text-warning'
+                              : 'bg-st-early-bg text-st-early'
                           }`}
                         >
                           {delaySec > 0
@@ -238,7 +238,7 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
             </ul>
           )}
           {error && updatedAt && (
-            <p className="mt-2 text-[0.875rem] font-semibold text-warning">
+            <p className="mt-2 text-[0.8125rem] font-semibold text-warning">
               Update failed — showing{' '}
               {updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} data,
               retrying…
