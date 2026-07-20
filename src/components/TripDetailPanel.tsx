@@ -1,26 +1,19 @@
 import { useMemo, useState } from 'react';
 import { BusStop, StopEta, TripTrackingState } from '../types';
-import { BusIcon, CheckIcon, ChevronDownIcon, CloseIcon, GpsIcon } from './Icons';
+import { BusIcon, CheckIcon, ChevronDownIcon, CloseIcon } from './Icons';
 import {
-  DelayChip,
   FreshnessChip,
-  StatusBadge,
   delayViewFromSeconds,
-  tripDelayView,
-  tripStatusKind,
 } from './StatusChips';
-import { formatRouteName, formatStopName, isPlaceholderDriver } from '../utils/display-names';
-import {
-  formatJourneyDistance,
-  formatJourneyDuration,
-  getJourneyTotals,
-} from '../utils/journey-totals';
+import { formatRouteName, formatStopName } from '../utils/display-names';
 
 interface TripDetailPanelProps {
   trip: TripTrackingState;
   /** Full ordered stop list of the trip's route, when loaded — enables the
    *  "stops passed" section and stable stop numbering. */
   routeStops?: BusStop[];
+  /** Click a stop number (or passed stop) → highlight + zoom that stop on the map. */
+  onStopNumberClick?: (stop: { id: string; name: string; longitude: number; latitude: number }) => void;
   onClose: () => void;
 }
 
@@ -70,10 +63,28 @@ function clockIn(seconds: number): string {
 }
 
 /** Uppercase micro-label used across the metric strip. */
-const METRIC_LABEL = 'mb-1 block text-[0.75rem] font-semibold uppercase tracking-[0.06em] text-muted';
+const METRIC_LABEL = 'mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted';
 
-export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelProps) {
+export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }: TripDetailPanelProps) {
   const [showPassed, setShowPassed] = useState(false);
+
+  const coordsById = useMemo(() => {
+    const map = new Map<string, BusStop>();
+    routeStops?.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [routeStops]);
+
+  const focusStop = (id: string, name: string) => {
+    if (!onStopNumberClick) return;
+    const hit = coordsById.get(id);
+    if (!hit || !Number.isFinite(hit.longitude) || !Number.isFinite(hit.latitude)) return;
+    onStopNumberClick({
+      id: hit.id,
+      name: hit.name || name,
+      longitude: hit.longitude,
+      latitude: hit.latitude,
+    });
+  };
 
   // Stops already behind the bus: route stops that sit before the first
   // upcoming stop in sequence and are no longer in the live ETA list.
@@ -101,14 +112,12 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
   }, [routeStops, passedStops.length]);
 
   const route = formatRouteName(trip.route_name);
-  const journey = useMemo(() => getJourneyTotals(trip), [trip]);
   const stops = trip.stop_etas;
   const nextStop = stops[0];
-  const delay = tripDelayView(trip);
   const totalStops = routeStops?.length ?? passedStops.length + stops.length;
   // With no GPS the numbers below are last-known, not live — say so visually.
   const stale = !trip.gps_connected;
-  const metricValue = `num break-words text-[1.1875rem] font-semibold leading-tight tracking-tight ${
+  const metricValue = `num break-words text-[1.125rem] font-semibold leading-tight tracking-tight ${
     stale ? 'text-muted' : 'text-ink'
   }`;
 
@@ -120,72 +129,43 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
       aria-label={`Trip details — ${trip.vehicle_plate}`}
     >
       <div className="sheet-handle md:hidden" aria-hidden="true" />
-      <header className="shrink-0 px-5 pb-3 pt-3 md:pt-5">
+      <header className="shrink-0 border-b border-line/40 px-5 pb-4 pt-3 md:pt-5">
         <div className="flex items-center gap-2.5">
           <span className="num text-[1.5rem] font-bold tracking-tight text-primary">
             {trip.vehicle_plate}
           </span>
           <FreshnessChip connected={trip.gps_connected} lastUpdated={trip.last_updated} />
           <button
-            className="pressable ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="pressable ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line/80 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             onClick={onClose}
             aria-label="Close trip details"
           >
             <CloseIcon size={14} />
           </button>
         </div>
-        <p className="mt-1.5 text-[0.9375rem] font-semibold uppercase tracking-wide text-ink">
+        <p className="mt-1.5 text-[0.9375rem] font-semibold tracking-wide text-ink">
           {route.name}
           {route.code && (
-            <span className="num ml-1.5 rounded-md bg-muted-bg px-1.5 py-px text-[0.8125rem] font-bold normal-case tracking-wide text-primary">
+            <span className="num ml-1.5 rounded-md bg-primary-soft px-1.5 py-px text-[0.75rem] font-bold tracking-wide text-primary">
               {route.code}
             </span>
           )}
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StatusBadge kind={tripStatusKind(trip)} />
-          <DelayChip view={delay} />
-          {!isPlaceholderDriver(trip.driver_name) && (
-            <span className="ml-auto text-[0.875rem] font-medium text-muted">{trip.driver_name}</span>
-          )}
-        </div>
-        {nextStop && (
-          <div className="heading-banner mt-3">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white">
-              <BusIcon size={11} />
-            </span>
-            <span className="min-w-0 break-words">
-              Heading to:{' '}
-              <b className="text-primary">{formatStopName(nextStop.stop_name)}</b>
-            </span>
-          </div>
-        )}
       </header>
 
-      {stale && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-bg px-4 py-2 text-[0.875rem] font-semibold text-[#92400E]">
-          <GpsIcon size={12} className="shrink-0" />
-          Signal lost — showing last known data
-        </div>
-      )}
-
-      {/* Metric strip — mint tiles like the driver app */}
-      <div className="mx-4 grid shrink-0 grid-cols-3 gap-2">
+      <div className="mx-4 mt-4 grid shrink-0 grid-cols-3 gap-2">
         <div className="mint-card min-w-0 overflow-visible">
           <label className={METRIC_LABEL}>Speed</label>
           <b className={metricValue}>
             {trip.speed_kmh.toFixed(0)}{' '}
-            <small className="text-[0.8125rem] font-medium text-muted">km/h</small>
+            <small className="text-[0.75rem] font-medium text-muted">km/h</small>
           </b>
         </div>
         <div className="mint-card min-w-0 overflow-visible">
           <label className={METRIC_LABEL}>Dest. ETA</label>
           <b className={metricValue}>{formatCountdown(trip.remaining_duration_seconds)}</b>
-          <span className="num mt-0.5 block break-words text-[0.8125rem] text-muted">
-            {clockIn(trip.remaining_duration_seconds)}
-          </span>
-          <span className="num mt-0.5 block break-words text-[0.8125rem] font-semibold text-ink">
-            {formatDistance(trip.remaining_distance_meters)}
+          <span className="num mt-0.5 block break-words text-[0.75rem] text-muted">
+            {clockIn(trip.remaining_duration_seconds)} · {formatDistance(trip.remaining_distance_meters)}
           </span>
         </div>
         <div className="mint-card min-w-0 overflow-visible">
@@ -194,7 +174,7 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
             {nextStop ? formatCountdown(nextStop.remaining_duration_seconds) : '—'}
           </b>
           <span
-            className="mt-0.5 block break-words text-[0.8125rem] leading-snug text-muted"
+            className="mt-0.5 block break-words text-[0.75rem] leading-snug text-muted"
             title={nextStop ? formatStopName(nextStop.stop_name) : undefined}
           >
             {nextStop ? formatStopName(nextStop.stop_name) : 'Arriving'}
@@ -202,47 +182,7 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
         </div>
       </div>
 
-      <div className="shrink-0 px-5 py-4">
-        <div className="mb-2 flex items-center justify-between gap-2 text-[0.875rem] font-medium text-muted">
-          <span>Full journey</span>
-          <span>
-            <b className="num font-semibold text-ink">
-              {formatJourneyDistance(journey.distanceMeters)}
-            </b>
-            {' · '}
-            <b className="num font-semibold text-ink">
-              {formatJourneyDuration(journey.durationSeconds)}
-            </b>
-          </span>
-        </div>
-        <div
-          className="h-1.5 overflow-hidden rounded-full bg-line"
-          role="progressbar"
-          aria-valuenow={Math.round(trip.completion_percentage)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Route completion"
-        >
-          <div
-            className="h-full rounded-full bg-primary transition-[width] duration-500"
-            style={{ width: `${trip.completion_percentage}%` }}
-          />
-        </div>
-        <div className="mt-2 flex justify-between gap-2 text-[0.875rem] font-medium text-muted">
-          <span>
-            <b className="num font-semibold text-ink">{trip.completion_percentage.toFixed(0)}%</b>{' '}
-            complete
-          </span>
-          <span>
-            <b className="num font-semibold text-ink">
-              {formatDistance(trip.remaining_distance_meters)}
-            </b>{' '}
-            remaining
-          </span>
-        </div>
-      </div>
-
-      <div className="shrink-0 px-5 pb-2 text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-muted">
+      <div className="shrink-0 px-5 pb-1.5 pt-5 text-[0.75rem] font-semibold uppercase tracking-[0.07em] text-muted">
         Route · {totalStops} stops
       </div>
       <div className="scrollbar-thin flex-1 overflow-y-auto px-5 pb-5">
@@ -251,31 +191,52 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
             No upcoming stops — the bus is arriving at its destination.
           </p>
         ) : (
-          <ol className="relative mt-4 list-none before:absolute before:bottom-3.5 before:left-[10px] before:top-2.5 before:w-0.5 before:bg-line before:content-['']">
+          <ol className="relative mt-2 list-none before:absolute before:bottom-4 before:left-[11px] before:top-3 before:w-px before:bg-line/70 before:content-['']">
             {passedStops.length > 0 && (
-              <li className="relative pb-4 pl-9">
+              <li className="relative pb-5 pl-10">
                 <span
-                  className="absolute left-0 top-0 z-[1] flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 border-line-light bg-muted-bg text-success"
+                  className="absolute left-0 top-0.5 z-[1] flex h-6 w-6 items-center justify-center rounded-full border border-line bg-muted-bg text-success"
                   aria-hidden="true"
                 >
                   <CheckIcon size={11} />
                 </span>
                 <button
-                  className="pressable flex items-center gap-1.5 py-0.5 text-[0.9375rem] font-semibold text-muted hover:text-ink focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                  className="pressable flex items-center gap-1.5 py-0.5 text-[0.875rem] font-semibold text-muted hover:text-ink focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
                   onClick={() => setShowPassed((v) => !v)}
                   aria-expanded={showPassed}
                 >
                   {passedStops.length} {passedStops.length === 1 ? 'stop' : 'stops'} passed
                   <ChevronDownIcon
                     size={13}
-                    className={`transition-transform duration-200 ${showPassed ? 'rotate-180' : ''}`}
+                    className={`transition-transform duration-200 ease-smooth ${showPassed ? 'rotate-180' : ''}`}
                   />
                 </button>
                 {showPassed && (
-                  <ul className="mt-1.5 list-none">
-                    {passedStops.map((s) => (
-                      <li key={s.id} className="py-0.5 text-[0.9375rem] text-muted">
-                        {formatStopName(s.name)}
+                  <ul className="mt-2 list-none space-y-1">
+                    {passedStops.map((s, pi) => (
+                      <li key={s.id} className="text-[0.875rem] text-muted">
+                        {onStopNumberClick ? (
+                          <button
+                            type="button"
+                            className="pressable inline-flex items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-muted-bg hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                            onClick={() =>
+                              onStopNumberClick({
+                                id: s.id,
+                                name: s.name,
+                                longitude: s.longitude,
+                                latitude: s.latitude,
+                              })
+                            }
+                            aria-label={`Show stop ${pi + 1} on map: ${formatStopName(s.name)}`}
+                          >
+                            <span className="num inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-line-light text-[0.6875rem] font-bold text-ink-soft">
+                              {pi + 1}
+                            </span>
+                            {formatStopName(s.name)}
+                          </button>
+                        ) : (
+                          formatStopName(s.name)
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -283,18 +244,18 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
               </li>
             )}
 
-            <li className="relative pb-4 pl-9">
+            <li className="relative pb-5 pl-10">
               <span
-                className="absolute -left-0.5 top-0 z-[1] flex h-[26px] w-[26px] items-center justify-center rounded-full bg-primary text-white shadow-card"
+                className="absolute left-0 top-0 z-[1] flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white shadow-card"
                 aria-hidden="true"
               >
-                <BusIcon size={13} />
+                <BusIcon size={12} />
               </span>
-              <div className="inline-flex items-center gap-2.5 rounded-full bg-primary px-3.5 py-1.5 text-white">
-                <span className="num text-[0.9375rem] font-bold tracking-wide">
+              <div className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-1 text-white">
+                <span className="num text-[0.875rem] font-bold tracking-wide">
                   {trip.vehicle_plate}
                 </span>
-                <span className="num text-[0.875rem] font-semibold text-white/70">
+                <span className="num text-[0.8125rem] font-medium text-white/70">
                   {trip.speed_kmh.toFixed(0)} km/h
                 </span>
               </div>
@@ -319,73 +280,90 @@ export function TripDetailPanel({ trip, routeStops, onClose }: TripDetailPanelPr
                     : null);
               const delay = formatStopDelay(s.delay_seconds ?? trip.delay_seconds);
 
-              // Next stop = teal (mobile active); later stops = orange (mobile upcoming).
               const nodeTone = isNext
                 ? 'rounded-full border-primary bg-primary text-white shadow-ring-next'
                 : isLast
-                  ? 'rounded-[7px] border-accent bg-accent text-white'
-                  : 'rounded-full border-accent bg-accent text-white';
+                  ? 'rounded-lg border-accent bg-accent text-white'
+                  : 'rounded-full border-accent/90 bg-accent text-white';
+
+              const stopBtn = onStopNumberClick ? (
+                <button
+                  type="button"
+                  className={`num absolute left-0 top-2.5 z-[1] flex h-6 w-6 items-center justify-center border text-[0.75rem] font-bold
+                    pressable transition-transform duration-200 ease-smooth hover:scale-105
+                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${nodeTone}`}
+                  onClick={() => focusStop(s.stop_id, s.stop_name)}
+                  aria-label={`Show stop ${stopNumber(s, i)} on map: ${hereName}`}
+                  title="Show on map"
+                >
+                  {stopNumber(s, i)}
+                </button>
+              ) : (
+                <span
+                  className={`num absolute left-0 top-2.5 z-[1] flex h-6 w-6 items-center justify-center border text-[0.75rem] font-bold ${nodeTone}`}
+                  aria-hidden="true"
+                >
+                  {stopNumber(s, i)}
+                </span>
+              );
 
               return (
-                <li key={s.stop_id} className="relative pb-4 pl-9 last:pb-0">
+                <li key={s.stop_id} className="relative pb-3.5 pl-10 last:pb-0">
+                  {stopBtn}
                   <div
-                    className={`relative rounded-2xl border px-3 py-2.5 ${
-                      isNext ? 'border-primary/25 bg-muted-bg' : 'border-line bg-white'
+                    className={`relative rounded-2xl px-3.5 py-3 transition-colors duration-200 ${
+                      isNext
+                        ? 'border border-primary/20 bg-primary-soft/40'
+                        : 'border border-line/40 bg-muted-bg/40'
                     }`}
                   >
-                    <span
-                      className={`num absolute -left-9 top-2.5 z-[1] flex h-6 w-6 items-center justify-center border-2 text-[0.75rem] font-bold ${nodeTone}`}
-                      aria-hidden="true"
-                    >
-                      {stopNumber(s, i)}
-                    </span>
-
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <span
-                          className={`block break-words text-[1.0625rem] leading-snug ${
-                            isNext ? 'font-bold text-primary' : 'font-medium text-ink'
-                          }`}
-                        >
-                          {hereName}
-                        </span>
+                    <div className="min-w-0">
+                      <span
+                        className={`block break-words text-[1rem] leading-snug ${
+                          isNext ? 'font-bold text-primary' : 'font-semibold text-ink'
+                        }`}
+                      >
+                        {hereName}
+                      </span>
+                      {legMeters != null && (
                         <span className="mt-0.5 block break-words text-[0.8125rem] leading-snug text-muted">
-                          {prevName} → {hereName}
-                          {legMeters != null && (
-                            <span className="num font-semibold text-ink">
-                              {' · '}
-                              {formatDistance(legMeters)}
-                            </span>
-                          )}
+                          from {prevName}
+                          <span className="num font-semibold text-ink-soft">
+                            {' · '}
+                            {formatDistance(legMeters)}
+                          </span>
                         </span>
-                      </div>
+                      )}
                     </div>
 
-                    {/* Travel time uses stop names; arrival clock separate */}
-                    <div className="mt-2 space-y-1.5 border-t border-line/80 pt-2">
-                      <div className="flex items-start justify-between gap-3 text-[0.875rem]">
-                        <span className="min-w-0 flex-1 break-words leading-snug text-muted">
-                          ETA from {prevName} to {hereName}
-                        </span>
-                        <span
-                          className={`num shrink-0 pt-0.5 font-semibold ${
+                    <div className="mt-2.5 grid grid-cols-3 gap-2 border-t border-line/40 pt-2.5">
+                      <div className="min-w-0">
+                        <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-muted">
+                          Leg ETA
+                        </p>
+                        <p
+                          className={`num mt-0.5 text-[0.875rem] font-semibold ${
                             isNext ? 'text-primary' : 'text-ink'
                           }`}
                         >
                           {legSeconds != null ? formatCountdown(legSeconds) : '—'}
-                        </span>
+                        </p>
                       </div>
-                      <div className="flex items-start justify-between gap-3 text-[0.875rem]">
-                        <span className="min-w-0 break-words text-muted">Arrival time</span>
-                        <span className="num shrink-0 font-semibold text-ink">
+                      <div className="min-w-0">
+                        <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-muted">
+                          Arrival
+                        </p>
+                        <p className="num mt-0.5 text-[0.875rem] font-semibold text-ink">
                           {formatArrivalClock(s)}
-                        </span>
+                        </p>
                       </div>
-                      <div className="flex items-start justify-between gap-3 text-[0.875rem]">
-                        <span className="min-w-0 break-words text-muted">Delay</span>
-                        <span className={`num shrink-0 font-semibold ${delay.tone}`}>
+                      <div className="min-w-0">
+                        <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-muted">
+                          Delay
+                        </p>
+                        <p className={`num mt-0.5 text-[0.875rem] font-semibold ${delay.tone}`}>
                           {delay.label}
-                        </span>
+                        </p>
                       </div>
                     </div>
                   </div>

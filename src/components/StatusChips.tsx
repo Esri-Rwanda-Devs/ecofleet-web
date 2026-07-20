@@ -25,8 +25,8 @@ const STATUS_LABEL: Record<TripStatusKind, string> = {
 
 const STATUS_CLASS: Record<TripStatusKind, string> = {
   onroute: 'bg-st-onroute-bg text-success',
-  deadhead: 'bg-st-deadhead-bg text-ink-soft',
-  gpslost: 'bg-st-gpslost-bg text-warning',
+  deadhead: 'bg-st-deadhead-bg text-warning',
+  gpslost: 'bg-st-gpslost-bg text-stale',
 };
 
 const STATUS_DOT: Record<TripStatusKind, string> = {
@@ -54,7 +54,7 @@ export function StatusBadge({ kind }: { kind: TripStatusKind }) {
 /** Beyond this, a "delay" is almost certainly stale data, not a live fact. */
 const STALE_DELAY_SECONDS = 6 * 3600;
 
-export type DelayTone = 'late' | 'early' | 'ontime' | 'pending' | 'stale';
+export type DelayTone = 'late' | 'early' | 'ontime' | 'pending' | 'stale' | 'critical';
 
 export interface DelayView {
   tone: DelayTone;
@@ -64,11 +64,12 @@ export interface DelayView {
 }
 
 const DELAY_CLASS: Record<DelayTone, string> = {
-  late: 'bg-danger-bg text-danger',
+  late: 'bg-warning-bg text-warning',
   early: 'bg-st-early-bg text-st-early',
   ontime: 'bg-success-bg text-success',
-  pending: 'bg-warning-bg text-warning',
-  stale: 'cursor-help bg-warning-bg text-warning',
+  pending: 'bg-muted-bg text-muted',
+  stale: 'cursor-help bg-stale-bg text-stale',
+  critical: 'bg-danger-bg text-danger',
 };
 
 function formatDelayMinutes(seconds: number): string {
@@ -98,6 +99,9 @@ export function delayViewFromSeconds(seconds: number): DelayView {
       label: 'check data',
       title: `${seconds > 0 ? '+' : '−'}${formatDelayMinutes(seconds)} vs plan — likely a stale schedule, not a live delay`,
     };
+  }
+  if (seconds > 0 && mins >= 12) {
+    return { tone: 'critical', label: `+${formatDelayMinutes(seconds)} late` };
   }
   return seconds > 0
     ? { tone: 'late', label: `+${formatDelayMinutes(seconds)} late` }
@@ -136,7 +140,7 @@ function formatAge(ms: number): string {
 const FRESHNESS_CLASS: Record<'ok' | 'warn' | 'lost', string> = {
   ok: 'bg-success-bg text-success',
   warn: 'bg-warning-bg text-warning',
-  lost: 'bg-st-gpslost-bg text-warning',
+  lost: 'bg-stale-bg text-stale',
 };
 
 /**

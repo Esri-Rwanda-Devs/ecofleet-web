@@ -34,7 +34,7 @@ export function useVehicleGraphics(
           geometry: point,
           symbol: new SimpleMarkerSymbol({
             style: 'triangle',
-            color: t.gps_connected ? '#34D399' : '#F87171',
+            color: t.gps_connected ? '#16A34A' : '#0A0A0A',
             size: 20,
             outline: { color: '#ffffff', width: 2 },
             angle: t.heading,
@@ -49,7 +49,7 @@ export function useVehicleGraphics(
           symbol: new TextSymbol({
             text: t.vehicle_plate,
             color: '#ffffff',
-            haloColor: '#0F766E',
+            haloColor: '#14532D',
             haloSize: 2,
             yoffset: -22,
             font: { size: 11, weight: 'bold' },
@@ -104,7 +104,7 @@ export function useSelectedRouteGraphics(
         new Graphic({
           geometry: routeLine,
           symbol: new SimpleLineSymbol({
-            color: '#0F766E',
+            color: '#16A34A',
             width: 3,
             cap: 'round',
             join: 'round',
@@ -128,7 +128,7 @@ export function useSelectedRouteGraphics(
           geometry: point,
           symbol: new SimpleMarkerSymbol({
             style: isOrigin || isDestination ? 'square' : 'circle',
-            color: isOrigin ? '#38BDF8' : isDestination ? '#F87171' : '#F59E0B',
+            color: isOrigin ? '#16A34A' : isDestination ? '#0A0A0A' : '#525252',
             size: isOrigin || isDestination ? 14 : 12,
             outline: { color: '#ffffff', width: 2 },
           }),
