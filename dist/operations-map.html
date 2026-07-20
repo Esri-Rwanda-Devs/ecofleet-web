@@ -26,6 +26,7 @@
   <div id="viewDiv"></div>
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
+    var busStopsFeatureLayer = null, busRoutesFeatureLayer = null;
     var highlightGraphic = null, highlightStopId = null;
     // One-shot focus: when the parent selects a bus the camera flies to it
     // once, then the operator keeps full control of the map.
@@ -33,6 +34,10 @@
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
+    var stopsLayerUrl = params.get('stopsLayer') ||
+      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
+    var routesLayerUrl = params.get('routesLayer') ||
+      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -51,29 +56,137 @@
         'esri/Map',
         'esri/views/MapView',
         'esri/layers/GraphicsLayer',
+        'esri/layers/FeatureLayer',
         'esri/layers/OpenStreetMapLayer',
         'esri/Basemap',
-        'esri/identity/IdentityManager'
-      ], function(Map, MapView, GraphicsLayer, OpenStreetMapLayer, Basemap, identityManager) {
+        'esri/identity/IdentityManager',
+        'esri/config'
+      ], function(Map, MapView, GraphicsLayer, FeatureLayer, OpenStreetMapLayer, Basemap, identityManager, esriConfig) {
 
         if (arcgisToken) {
           try {
+            var expires = Date.now() + 7200000;
+            // Portal generateToken (referer client) — needed for authenticated services.
             identityManager.registerToken({
               server: portalUrl.replace(/\/$/, '') + '/sharing/rest',
               token: arcgisToken,
-              expires: Date.now() + 7200000,
+              expires: expires,
               ssl: true
+            });
+            // FeatureServer lives on the ArcGIS Server host, not the portal.
+            identityManager.registerToken({
+              server: 'https://esrirw.rw/server',
+              token: arcgisToken,
+              expires: expires,
+              ssl: true
+            });
+            identityManager.registerToken({
+              server: 'https://esrirw.rw/server/rest/services',
+              token: arcgisToken,
+              expires: expires,
+              ssl: true
+            });
+            // Belt-and-suspenders: always attach the portal token to Bus_Lanes_BTS requests.
+            esriConfig.request.interceptors.push({
+              urls: /esrirw\.rw\/server\/rest\/services\/Bus_Lanes_BTS/i,
+              before: function(params) {
+                params.requestOptions = params.requestOptions || {};
+                params.requestOptions.query = params.requestOptions.query || {};
+                if (!params.requestOptions.query.token) {
+                  params.requestOptions.query.token = arcgisToken;
+                }
+              }
             });
           } catch (e) {}
         }
 
-        routeLayer = new GraphicsLayer();
-        stopLayer = new GraphicsLayer();
-        vehicleLayer = new GraphicsLayer();
+        // Network-wide background layers from Bus_Lanes_BTS FeatureServer.
+        // Selected trip route/stops still render on GraphicsLayers above these.
+        busRoutesFeatureLayer = new FeatureLayer({
+          url: routesLayerUrl,
+          title: 'Bus lanes',
+          outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+          opacity: 0.85,
+          popupEnabled: true,
+          popupTemplate: {
+            title: '{route_name}',
+            content: [
+              {
+                type: 'fields',
+                fieldInfos: [
+                  { fieldName: 'route_id', label: 'Route ID' },
+                  { fieldName: 'corridor', label: 'Corridor' },
+                  { fieldName: 'direction', label: 'Direction' },
+                  { fieldName: 'length_km', label: 'Length (km)' }
+                ]
+              }
+            ]
+          },
+          renderer: {
+            type: 'simple',
+            symbol: {
+              type: 'simple-line',
+              color: [56, 189, 248, 0.75],
+              width: 2.5,
+              style: 'solid'
+            }
+          }
+        });
+
+        busStopsFeatureLayer = new FeatureLayer({
+          url: stopsLayerUrl,
+          title: 'Bus stops',
+          outFields: ['stop_id', 'name', 'speed_kmh'],
+          popupEnabled: true,
+          popupTemplate: {
+            title: '{name}',
+            content: [
+              {
+                type: 'fields',
+                fieldInfos: [
+                  { fieldName: 'stop_id', label: 'Stop ID' },
+                  { fieldName: 'speed_kmh', label: 'Speed (km/h)' }
+                ]
+              }
+            ]
+          },
+          renderer: {
+            type: 'simple',
+            symbol: {
+              type: 'simple-marker',
+              style: 'circle',
+              color: [245, 158, 11, 0.9],
+              size: 7,
+              outline: { color: [255, 255, 255, 0.95], width: 1.5 }
+            }
+          },
+          labelingInfo: [{
+            labelExpressionInfo: { expression: '$feature.name' },
+            labelPlacement: 'above-center',
+            minScale: 40000,
+            symbol: {
+              type: 'text',
+              color: '#fff',
+              haloColor: '#0f172a',
+              haloSize: 1.5,
+              font: { size: 9, weight: 'bold' }
+            }
+          }]
+        });
+
+        routeLayer = new GraphicsLayer({ title: 'Selected route' });
+        stopLayer = new GraphicsLayer({ title: 'Selected stops' });
+        vehicleLayer = new GraphicsLayer({ title: 'Vehicles' });
 
         // Same pattern as working mobile WebView — satellite basemap, no custom UI widgets
         var map = new Map({ basemap: 'satellite' });
-        map.addMany([routeLayer, stopLayer, vehicleLayer]);
+        map.addMany([
+          busRoutesFeatureLayer,
+          busStopsFeatureLayer,
+          routeLayer,
+          stopLayer,
+          vehicleLayer
+        ]);
         window.__basemapName = 'satellite';
 
         view = new MapView({
@@ -85,6 +198,8 @@
           ui: { components: [] }
         });
 
+        // Only selected-trip graphics drive fleet/arrivals UI — keep FeatureLayer
+        // interactions as popups so backend UUID-based workflows stay intact.
         view.on('click', function(event) {
           view.hitTest(event, { include: [vehicleLayer, stopLayer] }).then(function(res) {
             var vehicleHit = res.results.find(function(r) {
@@ -145,16 +260,17 @@
 
         var polyline = data.polyline;
         var stops = data.stops || [];
+        routePath = polyline && polyline.length >= 2 ? polyline : null;
 
         if (polyline && polyline.length >= 2) {
           var line = new Polyline({ paths: [polyline] });
           routeLayer.add(new Graphic({
             geometry: line,
-            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 9, cap: 'round', join: 'round' })
+            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
           }));
           routeLayer.add(new Graphic({
             geometry: line,
-            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 6, cap: 'round', join: 'round' })
+            symbol: new SimpleLineSymbol({ color: '#0F766E', width: 3, cap: 'round', join: 'round' })
           }));
 
           var lngs = polyline.map(function(c) { return c[0]; });
@@ -234,9 +350,7 @@
     var VEHICLE_ANIM_MS = 4500;
     var vehicleAnimRunning = false;
 
-    // Stop markers stay as inline SVG badges (cached per color); the vehicle
-    // marker is the isometric bus image at /bus-marker.png (transparent
-    // derivative of bus.avif).
+    // Stop markers and the vehicle are inline SVG badges, cached per key.
     var svgIconCache = {};
     function svgDataUri(svg) {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
@@ -259,20 +373,42 @@
       return svgIconCache[key];
     }
 
-    // Isometric bus image — a fixed 3D render, so it can't rotate to the
-    // exact heading without looking upside-down. Direction of travel is
-    // shown by mirroring instead: the original art faces lower-left
-    // (westbound half), the flipped copy faces lower-right (eastbound half).
-    function vehicleIconUrl(heading) {
-      var h = ((heading % 360) + 360) % 360;
-      return h < 180 ? '/bus-marker-east.png' : '/bus-marker.png';
+    // Top-down bus drawn nose-up (windshield at the top), same visual language
+    // as the citizen app: the whole marker rotates through the symbol's angle
+    // so the bus points along its actual direction of travel — outbound AND on
+    // the return leg. White body + dark outline: white is the highest-contrast
+    // color against both the dark satellite imagery and the dark-teal route
+    // line the bus drives on, and no stop badge uses it.
+    var BUS_BODY = '#FFFFFF';
+    var BUS_DARK = '#0F172A';
+    function busIconUrl() {
+      var key = 'bus:' + BUS_BODY;
+      if (!svgIconCache[key]) {
+        svgIconCache[key] = svgDataUri(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">' +
+          // side mirrors (stick out just behind the windshield)
+          '<rect x="12.8" y="13.4" width="6" height="3" rx="1.5" fill="' + BUS_DARK + '"/>' +
+          '<rect x="37.2" y="13.4" width="6" height="3" rx="1.5" fill="' + BUS_DARK + '"/>' +
+          // body
+          '<rect x="18.5" y="9" width="19" height="38" rx="6.5" fill="' + BUS_BODY + '" stroke="' + BUS_DARK + '" stroke-width="2.5"/>' +
+          // windshield (marks the nose)
+          '<rect x="21.8" y="13.2" width="12.4" height="5.6" rx="2.2" fill="#0F766E"/>' +
+          // roof hatch
+          '<rect x="22.4" y="22.5" width="11.2" height="13" rx="2.6" fill="rgba(15,23,42,0.14)"/>' +
+          // rear window
+          '<rect x="22.4" y="39" width="11.2" height="3.8" rx="1.7" fill="rgba(15,23,42,0.35)"/>' +
+          '</svg>'
+        );
+      }
+      return svgIconCache[key];
     }
 
     function vehicleSymbol(heading) {
       return {
         type: 'picture-marker',
-        url: vehicleIconUrl(heading || 0),
-        width: '44px', height: '34px'
+        url: busIconUrl(),
+        width: '40px', height: '40px',
+        angle: ((heading || 0) % 360 + 360) % 360
       };
     }
 
@@ -295,6 +431,43 @@
       return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     }
 
+    // The bus drives ALONG the route: when a bus sits on the drawn route
+    // polyline, its orientation comes from the polyline segment underneath
+    // it — the route geometry is exact at every angle, where GPS heading
+    // jitters and movement bearings wobble between close fixes. The travel
+    // bearing only picks the direction: same as the segment when outbound,
+    // flipped 180° when the bus is coming back along the route.
+    var routePath = null; // [[lon,lat], ...] of the currently drawn route
+    function routeSnappedHeading(lon, lat, travelHdg) {
+      if (!routePath || routePath.length < 2) return null;
+      var cosLat = Math.cos(lat * Math.PI / 180);
+      var best = 0, bestD = Infinity;
+      for (var i = 0; i < routePath.length; i++) {
+        var dx = (routePath[i][0] - lon) * cosLat;
+        var dy = routePath[i][1] - lat;
+        var d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      // Only snap buses actually on this route (~60 m); others (different
+      // route, deadheading cross-town) keep their movement bearing.
+      if (bestD > 3e-7) return null;
+      var fromIdx = Math.min(best, routePath.length - 2);
+      var from = routePath[fromIdx];
+      var seg = null;
+      for (var j = fromIdx + 1; j < routePath.length; j++) {
+        if (Math.abs(routePath[j][0] - from[0]) > 1e-7 || Math.abs(routePath[j][1] - from[1]) > 1e-7) {
+          seg = bearing(from[0], from[1], routePath[j][0], routePath[j][1]);
+          break;
+        }
+      }
+      if (seg == null) return null;
+      if (travelHdg != null) {
+        var diff = ((seg - travelHdg + 540) % 360) - 180;
+        if (Math.abs(diff) > 90) seg = (seg + 180) % 360;
+      }
+      return seg;
+    }
+
     function vehicleLabelSymbol(plate, connected) {
       return {
         type: 'text', text: plate, color: '#fff',
@@ -315,8 +488,9 @@
         var hdg = lerpHeading(e.anim.fromHdg, e.anim.toHdg, p);
         var geom = { type: 'point', longitude: lon, latitude: lat };
         e.marker.geometry = geom;
-        // Only swap the image when the east/west facing actually changes.
-        if (vehicleIconUrl(hdg) !== vehicleIconUrl(e.hdg)) {
+        // Re-symbol only when the angle meaningfully changes (2° buckets) so
+        // straight runs don't churn symbols every frame.
+        if (Math.round(hdg / 2) !== Math.round(e.hdg / 2)) {
           e.marker.symbol = vehicleSymbol(hdg);
         }
         e.label.geometry = geom;
@@ -336,16 +510,21 @@
           var e = vehicleMarkers[t.trip_id];
           if (!e) {
             var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
+            // Route orientation from the very first paint when possible —
+            // GPS heading is often 0 ("unknown") at trip start.
+            var initHdg = routeSnappedHeading(t.longitude, t.latitude, t.heading || null);
+            if (initHdg == null) initHdg = t.heading || 0;
             var marker = new Graphic({
               geometry: geom,
-              symbol: vehicleSymbol(t.heading),
+              symbol: vehicleSymbol(initHdg),
               attributes: { tripId: t.trip_id, plate: t.vehicle_plate }
             });
             var label = new Graphic({ geometry: geom, symbol: vehicleLabelSymbol(t.vehicle_plate, connected) });
             vehicleLayer.addMany([marker, label]);
             vehicleMarkers[t.trip_id] = {
               marker: marker, label: label,
-              lon: t.longitude, lat: t.latitude, hdg: t.heading || 0,
+              lon: t.longitude, lat: t.latitude, hdg: initHdg,
+              travelHdg: t.heading || null,
               connected: connected, anim: null
             };
             if (focusTripId === t.trip_id) {
@@ -360,26 +539,33 @@
             e.label.symbol = vehicleLabelSymbol(t.vehicle_plate, connected);
           }
           e.connected = connected;
-          // Orient along the actual direction of travel once the bus has
-          // moved a few metres; below that trust the reported GPS heading,
-          // keeping the last known angle while stationary (heading 0 can
-          // mean "unknown").
+          // Direction of travel: movement between fixes once the bus has
+          // moved a few metres (GPS heading is 0 when unknown); it persists
+          // while the bus dwells so the icon doesn't spin at stops.
           var movedMeters = Math.hypot(
             (t.latitude - e.lat) * 111320,
             (t.longitude - e.lon) * 111320 * Math.cos(t.latitude * Math.PI / 180)
           );
-          var newHdg = movedMeters > 8
-            ? bearing(e.lon, e.lat, t.longitude, t.latitude)
-            : (t.heading ? t.heading : e.hdg);
+          if (movedMeters > 8) {
+            e.travelHdg = bearing(e.lon, e.lat, t.longitude, t.latitude);
+          } else if (e.travelHdg == null && t.heading) {
+            e.travelHdg = t.heading;
+          }
+          // Orientation: the route polyline under the bus wins (exact at
+          // every angle, correct outbound and on the return leg — the travel
+          // bearing picks which way along the route); movement bearing when
+          // off the drawn route; last angle while stationary.
+          var snapped = routeSnappedHeading(t.longitude, t.latitude, e.travelHdg);
+          var newHdg = snapped != null ? snapped : (e.travelHdg != null ? e.travelHdg : e.hdg);
           // Teleports (trip restart, long GPS gap) snap instead of gliding
           // across the city. ~0.01° ≈ 1km.
           var far = Math.abs(t.longitude - e.lon) + Math.abs(t.latitude - e.lat) > 0.01;
           if (far) {
             var snapGeom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
             e.marker.geometry = snapGeom;
-            e.marker.symbol = vehicleSymbol(t.heading || newHdg);
+            e.marker.symbol = vehicleSymbol(newHdg);
             e.label.geometry = snapGeom;
-            e.lon = t.longitude; e.lat = t.latitude; e.hdg = t.heading || newHdg;
+            e.lon = t.longitude; e.lat = t.latitude; e.hdg = newHdg;
             e.anim = null;
           } else {
             e.anim = {
