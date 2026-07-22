@@ -150,7 +150,7 @@ export function OperationsMap({
       />
       {!mapReady && (
         <div
-          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#E8E8E8] text-[1rem] font-medium text-muted"
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#E8E8E8] text-[1rem] font-medium text-muted dark:bg-[#141416]"
           role="status"
         >
           <div className="spinner h-8 w-8" />

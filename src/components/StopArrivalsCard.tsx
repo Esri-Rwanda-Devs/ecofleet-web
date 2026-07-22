@@ -14,6 +14,8 @@ interface StopArrivalsCardProps {
   stop: { id: string; name: string };
   tracking: TripTrackingState[];
   onClose: () => void;
+  /** When trip detail is open, lift the card so it stays readable on phones. */
+  tripOpen?: boolean;
 }
 
 function formatEta(seconds: number): string {

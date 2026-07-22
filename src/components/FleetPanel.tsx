@@ -103,7 +103,7 @@ export function FleetPanel({
             role="tab"
             aria-selected={filter === 'all'}
             className={`${FILTER_BTN} ${
-              filter === 'all' ? 'bg-white text-primary shadow-card' : 'text-muted hover:text-ink'
+              filter === 'all' ? 'bg-surface text-primary shadow-card' : 'text-muted hover:text-ink'
             }`}
             onClick={() => setFilter('all')}
           >
@@ -113,7 +113,7 @@ export function FleetPanel({
             role="tab"
             aria-selected={filter === 'delayed'}
             className={`${FILTER_BTN} ${
-              filter === 'delayed' ? 'bg-white text-primary shadow-card' : 'text-muted hover:text-ink'
+              filter === 'delayed' ? 'bg-surface text-primary shadow-card' : 'text-muted hover:text-ink'
             }`}
             onClick={() => setFilter('delayed')}
           >
@@ -159,10 +159,10 @@ export function FleetPanel({
                 key={t.trip_id}
                 className={`pressable group relative w-full overflow-hidden rounded-2xl border p-3.5 text-left
                   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
-                  transition-[border-color,box-shadow,background-color] duration-200 ease-smooth ${
+                  transition-[border-color,box-shadow,background-color,transform] duration-200 ease-smooth ${
                   selected
-                    ? 'border-primary/30 bg-primary-soft/80 shadow-panel'
-                    : 'border-line/50 bg-white hover:border-primary/20 hover:shadow-card'
+                    ? 'border-primary/30 bg-primary-soft/80 shadow-panel dark:ring-1 dark:ring-primary/20'
+                    : 'border-line/50 bg-surface hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-card dark:ring-1 dark:ring-white/[0.03]'
                 }`}
                 onClick={() => onSelectTrip(t.trip_id)}
                 title={t.route_name}

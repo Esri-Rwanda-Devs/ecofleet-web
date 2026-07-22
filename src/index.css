@@ -5,15 +5,95 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* EcoFleet Design System — light theme tokens (RGB triplets for Tailwind's rgb(var(x)/<alpha>) pattern) */
+    --color-primary: 22 163 74;
+    --color-primary-dark: 21 128 61;
+    --color-primary-light: 34 197 94;
+    --color-primary-soft: 220 252 231;
+    --color-accent: 23 23 23;
+    --color-canvas: 255 255 255;
+    --color-surface: 255 255 255;
+    --color-ink: 10 10 10;
+    --color-ink-soft: 38 38 38;
+    --color-muted: 82 82 82;
+    --color-muted-bg: 250 250 250;
+    --color-line: 229 229 229;
+    --color-line-light: 245 245 245;
+    --color-success: 22 163 74;
+    --color-success-bg: 220 252 231;
+    --color-warning: 10 10 10;
+    --color-warning-bg: 245 245 245;
+    --color-danger: 10 10 10;
+    --color-danger-bg: 229 229 229;
+    --color-info: 22 163 74;
+    --color-info-bg: 220 252 231;
+    --color-stale: 115 115 115;
+    --color-stale-bg: 245 245 245;
+    --color-st-onroute: 22 163 74;
+    --color-st-onroute-bg: 220 252 231;
+    --color-st-deadhead: 10 10 10;
+    --color-st-deadhead-bg: 245 245 245;
+    --color-st-gpslost: 115 115 115;
+    --color-st-gpslost-bg: 245 245 245;
+    --color-st-early: 22 163 74;
+    --color-st-early-bg: 220 252 231;
+    --color-st-critical: 10 10 10;
+    --color-st-critical-bg: 229 229 229;
+  }
+
+  .dark {
+    /* EcoFleet Design System — dark theme tokens */
+    --color-primary: 34 197 94;
+    --color-primary-dark: 21 128 61;
+    --color-primary-light: 74 222 128;
+    --color-primary-soft: 20 45 33;
+    --color-accent: 63 63 70;
+    --color-canvas: 10 10 12;
+    --color-surface: 24 24 27;
+    --color-ink: 245 245 245;
+    --color-ink-soft: 212 212 216;
+    --color-muted: 161 161 170;
+    --color-muted-bg: 39 39 42;
+    --color-line: 63 63 70;
+    --color-line-light: 39 39 42;
+    --color-success: 74 222 128;
+    --color-success-bg: 20 45 33;
+    --color-warning: 245 245 245;
+    --color-warning-bg: 39 39 42;
+    --color-danger: 245 245 245;
+    --color-danger-bg: 63 63 70;
+    --color-info: 74 222 128;
+    --color-info-bg: 20 45 33;
+    --color-stale: 161 161 170;
+    --color-stale-bg: 39 39 42;
+    --color-st-onroute: 74 222 128;
+    --color-st-onroute-bg: 20 45 33;
+    --color-st-deadhead: 245 245 245;
+    --color-st-deadhead-bg: 39 39 42;
+    --color-st-gpslost: 161 161 170;
+    --color-st-gpslost-bg: 39 39 42;
+    --color-st-early: 74 222 128;
+    --color-st-early-bg: 20 45 33;
+    --color-st-critical: 245 245 245;
+    --color-st-critical-bg: 63 63 70;
+  }
+
   html {
     color-scheme: light;
-    font-size: 17px;
+    /* Fluid base: ~15px phones → 17px desktop */
+    font-size: clamp(15px, 0.35vw + 14px, 17px);
+  }
+
+  html.dark {
+    color-scheme: dark;
   }
 
   body {
     @apply font-sans bg-canvas text-ink antialiased text-[1rem] leading-normal;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    transition: background-color 200ms ease-smooth, color 200ms ease-smooth;
   }
 
   ::selection {
@@ -44,16 +124,16 @@
   }
 
   .section-bg {
-    @apply bg-white/95 backdrop-blur-md;
+    @apply bg-surface/95 backdrop-blur-md;
   }
 
-  /* Docked panels — soft white surfaces */
+  /* Docked panels — elevated surfaces (white in light, charcoal in dark) */
   .sheet {
-    @apply relative overflow-hidden border border-line/60 bg-white/95 shadow-sheet backdrop-blur-sm;
+    @apply relative overflow-hidden border border-line/60 bg-surface/95 shadow-sheet backdrop-blur-sm dark:ring-1 dark:ring-white/[0.04];
   }
 
   .glass {
-    @apply border border-line/50 bg-white/90 shadow-card backdrop-blur-sm;
+    @apply border border-line/50 bg-surface/90 shadow-card backdrop-blur-sm dark:ring-1 dark:ring-white/[0.04];
   }
 
   .spinner {
@@ -70,7 +150,7 @@
   }
 
   .stat-strip__item {
-    @apply flex min-w-[3.25rem] flex-col items-center gap-0.5 rounded-xl bg-white px-3 py-1.5
+    @apply flex min-w-[3.25rem] flex-col items-center gap-0.5 rounded-xl bg-surface px-3 py-1.5
       shadow-card transition-[background-color,box-shadow,transform] duration-200 ease-smooth;
   }
 
@@ -89,10 +169,6 @@
 
   .sheet-handle {
     @apply mx-auto mb-1 mt-2.5 h-1 w-9 shrink-0 rounded-full bg-line/80;
-  }
-
-  .brand-mark {
-    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-card;
   }
 
   .status-pill {
@@ -126,6 +202,10 @@
     scrollbar-color: #86efac transparent;
   }
 
+  .dark .scrollbar-thin {
+    scrollbar-color: #22532f transparent;
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 4px;
   }
@@ -141,6 +221,32 @@
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background: #4ade80;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #22532f;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #15803d;
+  }
+
+  .safe-px {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  .safe-pt {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+
+  .safe-pb {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+
+  .h-app {
+    height: 100vh;
+    height: 100dvh;
   }
 }
 

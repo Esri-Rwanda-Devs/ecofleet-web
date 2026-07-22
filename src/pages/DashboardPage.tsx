@@ -11,10 +11,9 @@ import { FleetPanel } from '../components/FleetPanel';
 import { TripDetailPanel } from '../components/TripDetailPanel';
 import { StopArrivalsCard } from '../components/StopArrivalsCard';
 import { AlertsFeed, AlertEvent } from '../components/AlertsFeed';
-import {
-  BusIcon,
-  SearchIcon,
-} from '../components/Icons';
+import { ThemeToggle } from '../components/ThemeToggle';
+import { Logo } from '../components/Logo';
+import { SearchIcon } from '../components/Icons';
 import { formatRouteName, formatStopName } from '../utils/display-names';
 import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geometry';
 import { ArcGisConfig, BusStop, FleetOverview, Route, TripTrackingState } from '../types';
@@ -441,7 +440,9 @@ export function DashboardPage() {
         return;
       }
       e.preventDefault();
-      searchRef.current?.focus();
+      const inputs = document.querySelectorAll<HTMLInputElement>('input[data-fleet-search]');
+      const visible = [...inputs].find((input) => input.offsetParent !== null) ?? inputs[0];
+      visible?.focus();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -471,9 +472,7 @@ export function DashboardPage() {
   if (!config) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-4 bg-canvas">
-        <div className="brand-mark h-11 w-11 shadow-panel">
-          <BusIcon size={18} />
-        </div>
+        <Logo className="h-12" />
         <div className="spinner h-7 w-7" role="status" aria-label="Loading" />
         <p className="text-[0.8125rem] font-medium text-muted">Loading operations map…</p>
       </div>
@@ -481,77 +480,116 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-canvas">
-      <header className="relative z-30 shrink-0">
-        <div className="pointer-events-auto section-bg flex min-h-[4rem] flex-wrap items-center justify-between gap-3 border-b border-line/50 px-4 py-2 md:px-5">
-          <div className="flex max-w-[min(100%,24rem)] items-center gap-2.5">
-            <Link
-              to="/"
-              className="pressable group flex min-w-0 items-center gap-2.5 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              aria-label="Back to landing page"
-              title="Back to home"
-            >
-              <div className="brand-mark">
-                <BusIcon size={15} />
-              </div>
-              <div className="min-w-0 leading-tight">
-                <h1 className="truncate text-[1.0625rem] font-bold tracking-tight text-ink group-hover:text-primary">
-                  BTS Operations
-                </h1>
-                <p className="truncate text-[0.75rem] font-medium text-muted">
+    <div className="relative flex h-app flex-col overflow-hidden bg-canvas">
+      <header className="relative z-30 shrink-0 safe-pt">
+        <div className="pointer-events-auto section-bg border-b border-line/50">
+          <div className="flex min-h-14 items-center justify-between gap-2 safe-px py-2 md:min-h-16 md:px-5">
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:max-w-[min(100%,24rem)] sm:flex-none">
+              <Link
+                to="/"
+                className="pressable group flex min-w-0 items-center gap-2 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:gap-2.5"
+                aria-label="Back to landing page"
+                title="Back to home"
+              >
+                <Logo className="h-7 sm:h-8" />
+                <p className="hidden truncate text-[0.75rem] font-medium text-muted sm:block">
                   Kigali · Real-Time Command
                 </p>
-              </div>
-            </Link>
-            <span
-              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.75rem] font-bold ${
-                socketLive ? 'bg-success-bg text-success' : 'bg-stale-bg text-stale'
-              }`}
-              role="status"
-            >
+              </Link>
               <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  socketLive ? 'animate-pulse-dot bg-success' : 'bg-stale'
+                className={`flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[0.6875rem] font-bold sm:ml-1 sm:px-2.5 sm:text-[0.75rem] ${
+                  socketLive ? 'bg-success-bg text-success' : 'bg-stale-bg text-stale'
                 }`}
-                aria-hidden="true"
-              />
-              {socketLive ? 'LIVE' : 'POLL'}
-            </span>
-          </div>
+                role="status"
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    socketLive ? 'animate-pulse-dot bg-success' : 'bg-stale'
+                  }`}
+                  aria-hidden="true"
+                />
+                {socketLive ? 'LIVE' : 'POLL'}
+              </span>
+            </div>
 
-          <div className="hidden xl:block">
-            <div className="stat-strip">
-              <StatItem
-                label="active"
-                value={tracking.length}
-                active={statFocus === 'active'}
-                onClick={() => focusStat('active')}
-              />
-              <StatItem
-                label="delayed"
-                value={delayedCount}
-                tone={delayedCount > 0 ? 'danger' : 'success'}
-                active={statFocus === 'delayed'}
-                onClick={() => focusStat('delayed')}
-              />
-              <StatItem label="routes" value={routes.length} />
-              <StatItem label="available" value={overview?.buses_available ?? '—'} />
-              <StatItem
-                label="done"
-                value={overview?.completed_trips_today ?? '—'}
-                className="max-[1500px]:hidden"
-              />
+            <div className="hidden lg:block">
+              <div className="stat-strip">
+                <StatItem
+                  label="active"
+                  value={tracking.length}
+                  active={statFocus === 'active'}
+                  onClick={() => focusStat('active')}
+                />
+                <StatItem
+                  label="delayed"
+                  value={delayedCount}
+                  tone={delayedCount > 0 ? 'danger' : 'success'}
+                  active={statFocus === 'delayed'}
+                  onClick={() => focusStat('delayed')}
+                />
+                <StatItem label="routes" value={routes.length} className="hidden xl:flex" />
+                <StatItem
+                  label="available"
+                  value={overview?.buses_available ?? '—'}
+                  className="hidden xl:flex"
+                />
+                <StatItem
+                  label="done"
+                  value={overview?.completed_trips_today ?? '—'}
+                  className="hidden 2xl:flex"
+                />
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <label className="relative hidden items-center rounded-2xl border border-line/50 bg-muted-bg/60 transition-[border-color,box-shadow] duration-200 ease-smooth focus-within:border-primary/30 focus-within:bg-surface focus-within:shadow-card md:flex">
+                <SearchIcon
+                  size={15}
+                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
+                />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setQuery('');
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  type="search"
+                  data-fleet-search
+                  placeholder="Search bus stop"
+                  aria-label="Search bus stop"
+                  className="h-10 w-44 rounded-2xl bg-transparent pl-9 pr-8 text-[0.9375rem] font-medium text-ink placeholder:text-muted focus:outline-none lg:w-56 xl:w-64"
+                />
+                <kbd
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-surface/80 px-1.5 py-0.5 text-[11px] font-bold text-muted"
+                  aria-hidden="true"
+                >
+                  /
+                </kbd>
+              </label>
+
+              <div className="flex items-center gap-0.5 rounded-2xl border border-line/50 bg-muted-bg/60 p-1">
+                <AlertsFeed alerts={alerts} />
+                <ThemeToggle className="h-9 w-9" />
+                <span className="mx-1 hidden h-5 w-px bg-line/70 lg:block" aria-hidden="true" />
+                <span className="hidden px-2.5 lg:block">
+                  <ClockNow />
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <label className="relative hidden items-center rounded-2xl border border-line/50 bg-muted-bg/60 transition-[border-color,box-shadow] duration-200 ease-smooth focus-within:border-primary/30 focus-within:bg-white focus-within:shadow-card sm:flex">
+          {/* Mobile / tablet search + compact stats */}
+          <div className="flex flex-col gap-2 border-t border-line/40 px-3 pb-2.5 pt-2 safe-px md:hidden">
+            <label className="relative flex w-full items-center rounded-2xl border border-line/50 bg-muted-bg/60 focus-within:border-primary/30 focus-within:bg-surface">
               <SearchIcon
                 size={15}
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
               />
               <input
-                ref={searchRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -561,24 +599,34 @@ export function DashboardPage() {
                   }
                 }}
                 type="search"
+                data-fleet-search
                 placeholder="Search bus stop"
                 aria-label="Search bus stop"
-                className="h-10 w-52 rounded-2xl bg-transparent pl-9 pr-8 text-[0.9375rem] font-medium text-ink placeholder:text-muted focus:outline-none lg:w-64"
+                className="h-11 w-full rounded-2xl bg-transparent pl-9 pr-3 text-[1rem] font-medium text-ink placeholder:text-muted focus:outline-none"
               />
-              <kbd
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-white/80 px-1.5 py-0.5 text-[11px] font-bold text-muted"
-                aria-hidden="true"
-              >
-                /
-              </kbd>
             </label>
-
-            <div className="flex items-center gap-0.5 rounded-2xl border border-line/50 bg-muted-bg/60 p-1 pl-1.5">
-              <AlertsFeed alerts={alerts} />
-              <span className="mx-1 hidden h-5 w-px bg-line/70 sm:block" aria-hidden="true" />
-              <span className="hidden px-2.5 sm:block">
-                <ClockNow />
-              </span>
+            <div className="stat-strip w-full justify-between gap-1 overflow-x-auto">
+              <StatItem
+                label="active"
+                value={tracking.length}
+                active={statFocus === 'active'}
+                onClick={() => focusStat('active')}
+                className="min-w-[3.5rem] flex-1"
+              />
+              <StatItem
+                label="delayed"
+                value={delayedCount}
+                tone={delayedCount > 0 ? 'danger' : 'success'}
+                active={statFocus === 'delayed'}
+                onClick={() => focusStat('delayed')}
+                className="min-w-[3.5rem] flex-1"
+              />
+              <StatItem label="routes" value={routes.length} className="min-w-[3.5rem] flex-1" />
+              <StatItem
+                label="free"
+                value={overview?.buses_available ?? '—'}
+                className="min-w-[3.5rem] flex-1"
+              />
             </div>
           </div>
         </div>
@@ -601,8 +649,9 @@ export function DashboardPage() {
 
         <aside
           className={`absolute z-20 flex min-h-0 flex-col sheet animate-sheet-in
-            max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-h-[46vh] max-md:rounded-t-sheet max-md:border-x-0 max-md:border-b-0
-            md:inset-y-0 md:left-0 md:w-[380px] md:rounded-none md:border-b-0 md:border-l-0 md:border-t-0
+            max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-h-[min(48vh,420px)] max-md:rounded-t-sheet max-md:border-x-0 max-md:border-b-0 max-md:safe-pb
+            md:inset-y-0 md:left-0 md:w-[min(380px,38vw)] md:rounded-none md:border-b-0 md:border-l-0 md:border-t-0
+            lg:w-[380px]
             ${selectedTrip ? 'max-lg:hidden' : ''}`}
         >
           <div className="sheet-handle md:hidden" aria-hidden="true" />
@@ -632,6 +681,7 @@ export function DashboardPage() {
             stop={selectedStop}
             tracking={mapTracking}
             onClose={() => setSelectedStop(null)}
+            tripOpen={Boolean(selectedTrip)}
           />
         )}
       </div>

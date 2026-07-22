@@ -1,12 +1,14 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { BellIcon, BusIcon, FleetIcon, GpsIcon, MapPinIcon, RouteIcon } from '../components/Icons';
+import { BellIcon, FleetIcon, GpsIcon, MapPinIcon, RouteIcon } from '../components/Icons';
+import { ThemeToggle } from '../components/ThemeToggle';
+import { Logo } from '../components/Logo';
 
 /**
  * BTS Operations landing — UI UX Pro Max
  * Pattern: Real-Time / Operations + Hero-Centric
- * Style: Soft UI Evolution · Outfit + Work Sans
- * Brand: green / black / white · spacious density · elevated motion
+ * Style: Soft UI Evolution · Fira Sans + Fira Code
+ * Brand: blue / orange / white · spacious density · elevated motion
  */
 
 function useLandingReveal<T extends HTMLElement>() {
@@ -76,20 +78,20 @@ function ArrowIcon({ size = 16, className }: { size?: number; className?: string
 function HeroAtmosphere() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-      {/* Soft aurora washes — Soft UI Evolution depth */}
-      <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[70%] rounded-full bg-[radial-gradient(circle,rgba(22,163,74,0.22)_0%,transparent_68%)] motion-safe:animate-aurora-drift" />
+      {/* Soft aurora washes — Soft UI Evolution depth, brand green + ink */}
+      <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[70%] rounded-full bg-[radial-gradient(circle,rgba(22,163,74,0.22)_0%,transparent_68%)] motion-safe:animate-aurora-drift dark:bg-[radial-gradient(circle,rgba(34,197,94,0.24)_0%,transparent_68%)]" />
       <div
-        className="absolute -right-[15%] top-[5%] h-[55%] w-[55%] rounded-full bg-[radial-gradient(circle,rgba(10,10,10,0.08)_0%,transparent_65%)] motion-safe:animate-aurora-drift"
+        className="absolute -right-[15%] top-[5%] h-[55%] w-[55%] rounded-full bg-[radial-gradient(circle,rgba(10,10,10,0.08)_0%,transparent_65%)] motion-safe:animate-aurora-drift dark:bg-[radial-gradient(circle,rgba(255,255,255,0.06)_0%,transparent_65%)]"
         style={{ animationDelay: '-6s' }}
       />
       <div
-        className="absolute bottom-[-20%] left-[30%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(circle,rgba(22,163,74,0.12)_0%,transparent_70%)] motion-safe:animate-aurora-drift"
+        className="absolute bottom-[-20%] left-[30%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(circle,rgba(22,163,74,0.14)_0%,transparent_70%)] motion-safe:animate-aurora-drift dark:bg-[radial-gradient(circle,rgba(34,197,94,0.16)_0%,transparent_70%)]"
         style={{ animationDelay: '-11s' }}
       />
 
       {/* City grid fade */}
       <div
-        className="absolute inset-0 opacity-[0.35]"
+        className="absolute inset-0 opacity-[0.35] dark:opacity-[0.18]"
         style={{
           backgroundImage:
             'linear-gradient(to right, #E5E5E5 1px, transparent 1px), linear-gradient(to bottom, #E5E5E5 1px, transparent 1px)',
@@ -99,84 +101,101 @@ function HeroAtmosphere() {
         }}
       />
 
-      {/* Soft white vignette so brand text stays readable */}
-      <div className="absolute inset-0 bg-[linear-gradient(105deg,rgba(255,255,255,0.92)_0%,rgba(255,255,255,0.72)_42%,rgba(255,255,255,0.15)_68%,transparent_100%)]" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-white to-transparent" />
+      {/* Soft vignette — lighter on the right for the bus photo, matches canvas per theme */}
+      <div className="absolute inset-0 bg-[linear-gradient(105deg,rgba(255,255,255,0.95)_0%,rgba(255,255,255,0.85)_38%,rgba(255,255,255,0.35)_58%,transparent_100%)] dark:bg-[linear-gradient(105deg,rgba(10,10,12,0.96)_0%,rgba(10,10,12,0.86)_38%,rgba(10,10,12,0.35)_58%,transparent_100%)] lg:bg-[linear-gradient(100deg,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.88)_42%,rgba(255,255,255,0.25)_62%,transparent_100%)] dark:lg:bg-[linear-gradient(100deg,rgba(10,10,12,0.97)_0%,rgba(10,10,12,0.89)_42%,rgba(10,10,12,0.25)_62%,transparent_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-canvas to-transparent" />
 
+      {/* Route lines — desktop only, confined to the bus-image column so they
+          never cross the headline/body text */}
       <svg
-        className="absolute inset-0 h-full w-full"
-        viewBox="0 0 1200 800"
+        className="absolute inset-y-0 right-0 hidden w-[52%] lg:block"
+        viewBox="0 0 740 800"
         preserveAspectRatio="xMidYMid slice"
         fill="none"
+        aria-hidden="true"
       >
         <path
-          d="M80 620 C 220 580, 280 420, 420 380 S 620 340, 720 260 S 920 140, 1120 100"
-          stroke="#16A34A"
+          d="M40 700 C 160 660, 220 500, 340 440 S 520 380, 620 280 S 700 180, 720 90"
           strokeWidth="3.5"
           strokeLinecap="round"
           pathLength={1}
           strokeDasharray={1}
-          className="motion-safe:animate-route-draw"
+          className="stroke-primary motion-safe:animate-route-draw"
           opacity="0.9"
         />
         <path
-          d="M160 700 C 300 640, 380 560, 520 500 S 740 420, 860 360"
-          stroke="#0A0A0A"
+          d="M100 770 C 220 710, 300 610, 420 550 S 600 470, 680 390"
           strokeWidth="2.75"
           strokeLinecap="round"
           opacity="0.35"
           pathLength={1}
           strokeDasharray={1}
-          className="motion-safe:animate-route-draw"
+          className="stroke-ink motion-safe:animate-route-draw"
           style={{ animationDelay: '0.4s' }}
         />
         <path
-          d="M40 480 C 180 500, 300 460, 440 440 S 680 400, 820 320"
-          stroke="#16A34A"
+          d="M20 560 C 140 580, 240 520, 360 490 S 520 440, 600 360"
           strokeWidth="2"
           strokeLinecap="round"
           opacity="0.35"
           pathLength={1}
           strokeDasharray={1}
-          className="motion-safe:animate-route-draw"
+          className="stroke-primary motion-safe:animate-route-draw"
           style={{ animationDelay: '0.7s' }}
         />
 
         {[
-          [420, 380, '#16A34A'],
-          [720, 260, '#16A34A'],
-          [1120, 100, '#0A0A0A'],
-          [520, 500, '#16A34A'],
-        ].map(([x, y, color], i) => (
-          <g key={i}>
+          [340, 440, 'primary'],
+          [620, 280, 'primary'],
+          [720, 90, 'ink'],
+          [420, 550, 'primary'],
+        ].map(([x, y, tone], i) => (
+          <g key={i} className={tone === 'primary' ? 'fill-primary stroke-primary' : 'fill-ink stroke-ink'}>
             <circle
               cx={x as number}
               cy={y as number}
               r="18"
-              fill={color as string}
-              opacity="0.15"
+              opacity="0.12"
               className="motion-safe:animate-ping-soft"
               style={{ animationDelay: `${i * 0.55}s` }}
             />
-            <circle
-              cx={x as number}
-              cy={y as number}
-              r="9"
-              fill="#FFFFFF"
-              stroke={color as string}
-              strokeWidth="2.5"
-            />
-            <circle cx={x as number} cy={y as number} r="3" fill={color as string} />
+            <circle cx={x as number} cy={y as number} r="9" className="fill-surface" strokeWidth="2.5" />
+            <circle cx={x as number} cy={y as number} r="3" />
           </g>
         ))}
-
-        {/* Bus marker gliding the primary route */}
-        <g className="landing-bus">
-          <rect x="-18" y="-12" width="36" height="24" rx="6" fill="#16A34A" />
-          <rect x="-10" y="-6" width="9" height="7" rx="1.5" fill="#FFFFFF" opacity="0.92" />
-          <rect x="2" y="-6" width="9" height="7" rx="1.5" fill="#FFFFFF" opacity="0.92" />
-        </g>
       </svg>
+    </div>
+  );
+}
+
+function HeroBusImage() {
+  return (
+    <div className="relative mx-auto w-full max-w-[min(100%,560px)] lg:max-w-none lg:justify-self-end">
+      {/* Radial glow — the "floor glow" the cut-out bus rests on */}
+      <div
+        className="pointer-events-none absolute -inset-10 rounded-[2.5rem] bg-[radial-gradient(ellipse_at_center,rgba(22,163,74,0.22)_0%,transparent_70%)] blur-sm dark:bg-[radial-gradient(ellipse_at_center,rgba(34,197,94,0.28)_0%,transparent_70%)]"
+        aria-hidden="true"
+      />
+      {/* Ground contact ellipse — grounds the floating cut-out */}
+      <div
+        className="pointer-events-none absolute bottom-[9%] left-1/2 h-6 w-[62%] -translate-x-1/2 rounded-[100%] bg-ink/15 blur-md dark:bg-black/40"
+        aria-hidden="true"
+      />
+      <div className="motion-safe:animate-landing-fade-delay-3 relative">
+        <img
+          src="/bts-bus-hero.png"
+          alt="BTS Operations bus in Kigali — green fleet vehicle"
+          className="relative z-[1] h-auto w-full max-h-[min(56vh,460px)] object-contain object-center drop-shadow-[0_28px_40px_rgba(10,10,10,0.22)] lg:max-h-[min(74vh,600px)]"
+          width={800}
+          height={600}
+          fetchPriority="high"
+          decoding="async"
+        />
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-[0.8125rem] font-semibold text-muted lg:justify-end">
+          <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-primary" aria-hidden="true" />
+          Kigali fleet · live on the map
+        </p>
+      </div>
     </div>
   );
 }
@@ -185,10 +204,10 @@ function HeroAtmosphere() {
 function ConsolePreview() {
   return (
     <div
-      className="relative overflow-hidden rounded-[1.25rem] border border-line/60 bg-[#F8FAFC] shadow-pop"
+      className="relative overflow-hidden rounded-[1.25rem] border border-line/60 bg-muted-bg shadow-pop dark:ring-1 dark:ring-white/[0.04]"
       aria-hidden="true"
     >
-      <div className="flex h-11 items-center gap-2 border-b border-line/50 bg-white/90 px-4">
+      <div className="flex h-11 items-center gap-2 border-b border-line/50 bg-surface/90 px-4">
         <span className="h-2.5 w-2.5 rounded-full bg-line" />
         <span className="h-2.5 w-2.5 rounded-full bg-line" />
         <span className="h-2.5 w-2.5 rounded-full bg-line" />
@@ -203,7 +222,7 @@ function ConsolePreview() {
 
       <div className="grid min-h-[280px] grid-cols-1 md:min-h-[360px] md:grid-cols-[220px_1fr_200px]">
         {/* Fleet column */}
-        <div className="hidden flex-col gap-2 border-r border-line/50 bg-white p-3 md:flex">
+        <div className="hidden flex-col gap-2 border-r border-line/50 bg-surface p-3 md:flex">
           <p className="px-1 text-[0.6875rem] font-bold uppercase tracking-[0.08em] text-muted">
             Live fleet
           </p>
@@ -228,9 +247,9 @@ function ConsolePreview() {
         </div>
 
         {/* Map stage */}
-        <div className="relative min-h-[220px] overflow-hidden bg-[linear-gradient(160deg,#F0FDF4_0%,#FFFFFF_55%,#F5F5F5_100%)] md:min-h-0">
+        <div className="relative min-h-[220px] overflow-hidden bg-[linear-gradient(160deg,#F0FDF4_0%,#FFFFFF_55%,#F5F5F5_100%)] dark:bg-[linear-gradient(160deg,#0f1f16_0%,#0a0a0c_55%,#0a0a0c_100%)] md:min-h-0">
           <div
-            className="absolute inset-0 opacity-40"
+            className="absolute inset-0 opacity-40 dark:opacity-20"
             style={{
               backgroundImage:
                 'linear-gradient(to right, #D4D4D4 1px, transparent 1px), linear-gradient(to bottom, #D4D4D4 1px, transparent 1px)',
@@ -240,29 +259,29 @@ function ConsolePreview() {
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 640 360" fill="none">
             <path
               d="M40 280 C 140 250, 200 180, 300 160 S 460 120, 580 70"
-              stroke="#16A34A"
               strokeWidth="3"
               strokeLinecap="round"
+              className="stroke-primary"
             />
             <path
               d="M60 320 C 180 300, 240 240, 340 210"
-              stroke="#0A0A0A"
               strokeWidth="2.5"
               strokeLinecap="round"
               opacity="0.45"
+              className="stroke-ink"
             />
-            <circle cx="300" cy="160" r="8" fill="#fff" stroke="#16A34A" strokeWidth="2" />
-            <circle cx="460" cy="120" r="8" fill="#fff" stroke="#0A0A0A" strokeWidth="2" />
-            <circle cx="580" cy="70" r="8" fill="#fff" stroke="#16A34A" strokeWidth="2" />
-            <rect x="288" y="148" width="28" height="18" rx="4" fill="#16A34A" />
+            <circle cx="300" cy="160" r="8" strokeWidth="2" className="fill-surface stroke-primary" />
+            <circle cx="460" cy="120" r="8" strokeWidth="2" className="fill-surface stroke-primary-dark" />
+            <circle cx="580" cy="70" r="8" strokeWidth="2" className="fill-surface stroke-primary" />
+            <rect x="288" y="148" width="28" height="18" rx="4" className="fill-primary" />
           </svg>
-          <div className="absolute bottom-3 left-3 rounded-lg bg-white/90 px-2.5 py-1.5 text-[0.6875rem] font-semibold text-ink-soft shadow-card backdrop-blur-sm">
+          <div className="absolute bottom-3 left-3 rounded-lg bg-surface/90 px-2.5 py-1.5 text-[0.6875rem] font-semibold text-ink-soft shadow-card backdrop-blur-sm">
             ArcGIS · Kigali
           </div>
         </div>
 
         {/* Trip column */}
-        <div className="hidden flex-col gap-3 border-l border-line/50 bg-white p-3 md:flex">
+        <div className="hidden flex-col gap-3 border-l border-line/50 bg-surface p-3 md:flex">
           <p className="font-data text-[1rem] font-bold text-primary">RAD 482 A</p>
           <p className="text-[0.75rem] font-semibold text-ink">Nyabugogo → Remera</p>
           <div className="mt-1 space-y-2">
@@ -336,20 +355,13 @@ const METRICS = [
 
 export function LandingPage() {
   return (
-    <div className="landing min-h-screen overflow-x-hidden bg-white font-landing text-ink antialiased">
+    <div className="landing min-h-screen overflow-x-hidden bg-canvas font-landing text-ink antialiased">
       {/* Nav */}
-      <header className="sticky top-0 z-30 border-b border-line/40 bg-white/80 backdrop-blur-glass">
+      <header className="sticky top-0 z-30 border-b border-line/40 bg-canvas/80 backdrop-blur-glass">
         <div className="mx-auto flex h-[4.25rem] max-w-6xl items-center justify-between gap-4 px-5 sm:px-8">
-          <a href="#top" className="pressable flex items-center gap-2.5 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-card">
-              <BusIcon size={17} />
-            </span>
-            <div className="leading-tight">
-              <p className="font-display text-[0.975rem] font-bold tracking-tight text-ink">
-                BTS Operations
-              </p>
-              <p className="text-[0.6875rem] font-medium text-muted">Kigali · Real-Time Command</p>
-            </div>
+          <a href="#top" className="pressable flex items-center gap-3 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            <Logo className="h-9" />
+            <p className="text-[0.6875rem] font-medium text-muted">Kigali · Real-Time Command</p>
           </a>
           <nav className="hidden items-center gap-9 text-[0.875rem] font-semibold text-ink-soft md:flex">
             <a href="#capabilities" className="cursor-pointer hover:text-primary">
@@ -362,48 +374,56 @@ export function LandingPage() {
               How it works
             </a>
           </nav>
-          <Link
-            to="/dashboard"
-            className="pressable inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[0.875rem] font-bold text-white shadow-card hover:bg-primary-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            Enter command center
-            <ArrowIcon size={15} className="opacity-90" />
-          </Link>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <ThemeToggle />
+            <Link
+              to="/dashboard"
+              className="pressable inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[0.875rem] font-bold text-white shadow-card hover:bg-primary-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              <span className="hidden sm:inline">Enter command center</span>
+              <span className="sm:hidden">Enter</span>
+              <ArrowIcon size={15} className="opacity-90" />
+            </Link>
+          </div>
         </div>
       </header>
 
-      {/* Hero — brand first, one line, CTA, full-bleed map atmosphere */}
+      {/* Hero — headline + BTS fleet photo */}
       <section id="top" className="relative isolate min-h-[min(94vh,920px)] overflow-hidden">
         <HeroAtmosphere />
-        <div className="relative z-10 mx-auto flex max-w-6xl flex-col justify-center px-5 pb-24 pt-20 sm:px-8 sm:pb-32 sm:pt-28">
-          <p className="motion-safe:animate-landing-fade font-display text-[0.8125rem] font-bold uppercase tracking-[0.16em] text-primary">
-            Kigali · Real-Time Command
-          </p>
+        <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-10 px-5 pb-20 pt-16 sm:px-8 sm:pb-28 sm:pt-24 lg:grid-cols-[1fr_minmax(280px,46%)] lg:gap-12 lg:pb-32 lg:pt-28">
+          <div className="min-w-0">
+            <p className="motion-safe:animate-landing-fade font-display text-[0.8125rem] font-bold uppercase tracking-[0.16em] text-primary">
+              Kigali · Real-Time Command
+            </p>
 
-          <h1 className="motion-safe:animate-landing-fade-delay mt-5 max-w-[14ch] font-display text-[clamp(3rem,8vw,5.5rem)] font-extrabold leading-[0.98] tracking-[-0.04em] text-ink">
-            BTS Operations
-          </h1>
+            <h1 className="motion-safe:animate-landing-fade-delay mt-5 max-w-[14ch] font-display text-[clamp(2.5rem,7vw,5rem)] font-extrabold leading-[0.98] tracking-[-0.04em] text-ink lg:text-[clamp(3rem,4.5vw,5.5rem)]">
+              BTS Operations
+            </h1>
 
-          <p className="motion-safe:animate-landing-fade-delay-2 mt-6 max-w-lg text-[1.125rem] font-medium leading-relaxed text-ink-soft sm:text-[1.25rem]">
-            The live command center for bus dispatch — fleet, routes, delays, and ArcGIS locations
-            on one screen.
-          </p>
+            <p className="motion-safe:animate-landing-fade-delay-2 mt-6 max-w-lg text-[1.0625rem] font-medium leading-relaxed text-ink-soft sm:text-[1.125rem] lg:text-[1.25rem]">
+              The live command center for bus dispatch — fleet, routes, delays, and ArcGIS locations
+              on one screen.
+            </p>
 
-          <div className="motion-safe:animate-landing-fade-delay-3 mt-10 flex flex-wrap items-center gap-3">
-            <Link
-              to="/dashboard"
-              className="pressable inline-flex min-h-[3.25rem] items-center gap-2.5 rounded-2xl bg-primary px-7 text-[1.0625rem] font-bold text-white shadow-panel hover:bg-primary-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-            >
-              Open live dashboard
-              <ArrowIcon size={17} />
-            </Link>
-            <a
-              href="#capabilities"
-              className="pressable inline-flex min-h-[3.25rem] items-center rounded-2xl border border-line/70 bg-white/80 px-6 text-[1.0625rem] font-semibold text-ink backdrop-blur-sm hover:border-primary/30 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-            >
-              Explore capabilities
-            </a>
+            <div className="motion-safe:animate-landing-fade-delay-3 mt-8 flex flex-wrap items-center gap-3 sm:mt-10">
+              <Link
+                to="/dashboard"
+                className="pressable inline-flex min-h-[3.25rem] w-full items-center justify-center gap-2.5 rounded-2xl bg-primary px-7 text-[1rem] font-bold text-white shadow-panel hover:bg-primary-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:w-auto sm:text-[1.0625rem]"
+              >
+                Open live dashboard
+                <ArrowIcon size={17} />
+              </Link>
+              <a
+                href="#capabilities"
+                className="pressable inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-2xl border border-line/70 bg-surface/80 px-6 text-[1rem] font-semibold text-ink backdrop-blur-sm hover:border-primary/30 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:w-auto sm:text-[1.0625rem]"
+              >
+                Explore capabilities
+              </a>
+            </div>
           </div>
+
+          <HeroBusImage />
         </div>
       </section>
 
@@ -411,7 +431,7 @@ export function LandingPage() {
       <section className="relative z-10 border-y border-line/50 bg-muted-bg/50">
         <div className="mx-auto grid max-w-6xl grid-cols-2 gap-px bg-line/40 sm:grid-cols-4">
           {METRICS.map((m, i) => (
-            <Reveal key={m.label} delay={(Math.min(i + 1, 3) as 1 | 2 | 3)} className="bg-white px-5 py-8 sm:px-7 sm:py-10">
+            <Reveal key={m.label} delay={(Math.min(i + 1, 3) as 1 | 2 | 3)} className="bg-surface px-5 py-8 sm:px-7 sm:py-10">
               <p className="text-[0.75rem] font-bold uppercase tracking-[0.1em] text-muted">{m.label}</p>
               <p className={`mt-2 font-display text-[1.5rem] font-bold tracking-tight ${m.color}`}>
                 {m.value}
@@ -423,7 +443,7 @@ export function LandingPage() {
       </section>
 
       {/* Capabilities */}
-      <section id="capabilities" className="scroll-mt-24 bg-white py-24 sm:py-32">
+      <section id="capabilities" className="scroll-mt-24 bg-canvas py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-5 sm:px-8">
           <Reveal>
             <p className="font-display text-[0.75rem] font-bold uppercase tracking-[0.14em] text-primary">
@@ -443,7 +463,7 @@ export function LandingPage() {
               const Icon = c.icon;
               const tone =
                 c.tone === 'black'
-                  ? 'bg-ink text-white'
+                  ? 'bg-accent text-white'
                   : 'bg-primary-soft text-primary';
               return (
                 <Reveal key={c.title} delay={(Math.min(i + 1, 3) as 1 | 2 | 3)}>
@@ -464,7 +484,7 @@ export function LandingPage() {
       </section>
 
       {/* Product preview */}
-      <section id="preview" className="scroll-mt-24 bg-[linear-gradient(180deg,#F8FAFC_0%,#FFFFFF_100%)] py-24 sm:py-32">
+      <section id="preview" className="scroll-mt-24 bg-[linear-gradient(180deg,#F8FAFC_0%,#FFFFFF_100%)] py-24 dark:bg-[linear-gradient(180deg,#0f1310_0%,#0a0a0c_100%)] sm:py-32">
         <div className="mx-auto max-w-6xl px-5 sm:px-8">
           <Reveal>
             <p className="font-display text-[0.75rem] font-bold uppercase tracking-[0.14em] text-success">
@@ -505,7 +525,7 @@ export function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section id="how" className="scroll-mt-24 bg-white py-24 sm:py-32">
+      <section id="how" className="scroll-mt-24 bg-canvas py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-5 sm:px-8">
           <Reveal>
             <p className="font-display text-[0.75rem] font-bold uppercase tracking-[0.14em] text-ink">
@@ -588,13 +608,11 @@ export function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t border-line/60 bg-white py-10">
+      <footer className="border-t border-line/60 bg-canvas py-10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 text-[0.8125rem] text-muted sm:px-8">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white">
-              <BusIcon size={14} />
-            </span>
-            <span className="font-semibold text-ink-soft">BTS Operations · Kigali</span>
+            <Logo className="h-6" />
+            <span className="font-semibold text-ink-soft">Kigali</span>
           </div>
           <Link
             to="/dashboard"

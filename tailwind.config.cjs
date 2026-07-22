@@ -1,61 +1,69 @@
 /** @type {import('tailwindcss').Config} */
+
+/** Semantic color token → CSS variable, alpha-composable via Tailwind's rgb()/<alpha-value> pattern. */
+function themeColor(name) {
+  return `rgb(var(--color-${name}) / <alpha-value>)`;
+}
+
 module.exports = {
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
-      // BTS Operations — green · black · white
+      // EcoFleet Design System — Soft UI Evolution (light + dark, CSS-variable backed)
       colors: {
         primary: {
-          DEFAULT: '#16A34A', // green
-          dark: '#15803D',
-          light: '#22C55E',
-          soft: '#DCFCE7',
+          DEFAULT: themeColor('primary'),
+          dark: themeColor('primary-dark'),
+          light: themeColor('primary-light'),
+          soft: themeColor('primary-soft'),
         },
-        accent: '#0A0A0A', // black
-        canvas: '#FFFFFF',
+        accent: themeColor('accent'),
+        canvas: themeColor('canvas'),
+        surface: themeColor('surface'),
         ink: {
-          DEFAULT: '#0A0A0A',
-          soft: '#262626',
+          DEFAULT: themeColor('ink'),
+          soft: themeColor('ink-soft'),
         },
         muted: {
-          DEFAULT: '#525252',
-          bg: '#FAFAFA',
+          DEFAULT: themeColor('muted'),
+          bg: themeColor('muted-bg'),
         },
         line: {
-          DEFAULT: '#E5E5E5',
-          light: '#F5F5F5',
+          DEFAULT: themeColor('line'),
+          light: themeColor('line-light'),
         },
         success: {
-          DEFAULT: '#16A34A',
-          bg: '#DCFCE7',
+          DEFAULT: themeColor('success'),
+          bg: themeColor('success-bg'),
         },
         warning: {
-          DEFAULT: '#0A0A0A', // black (attention — no yellow)
-          bg: '#F5F5F5',
+          DEFAULT: themeColor('warning'), // black in light, near-white in dark — attention, no yellow
+          bg: themeColor('warning-bg'),
         },
         danger: {
-          DEFAULT: '#0A0A0A',
-          bg: '#E5E5E5',
+          DEFAULT: themeColor('danger'),
+          bg: themeColor('danger-bg'),
         },
         info: {
-          DEFAULT: '#16A34A',
-          bg: '#DCFCE7',
+          DEFAULT: themeColor('info'),
+          bg: themeColor('info-bg'),
         },
         stale: {
-          DEFAULT: '#737373',
-          bg: '#F5F5F5',
+          DEFAULT: themeColor('stale'),
+          bg: themeColor('stale-bg'),
         },
         st: {
-          onroute: '#16A34A',
-          'onroute-bg': '#DCFCE7',
-          deadhead: '#0A0A0A',
-          'deadhead-bg': '#F5F5F5',
-          gpslost: '#737373',
-          'gpslost-bg': '#F5F5F5',
-          early: '#16A34A',
-          'early-bg': '#DCFCE7',
-          critical: '#0A0A0A',
-          'critical-bg': '#E5E5E5',
+          onroute: themeColor('st-onroute'),
+          'onroute-bg': themeColor('st-onroute-bg'),
+          deadhead: themeColor('st-deadhead'),
+          'deadhead-bg': themeColor('st-deadhead-bg'),
+          gpslost: themeColor('st-gpslost'),
+          'gpslost-bg': themeColor('st-gpslost-bg'),
+          early: themeColor('st-early'),
+          'early-bg': themeColor('st-early-bg'),
+          critical: themeColor('st-critical'),
+          'critical-bg': themeColor('st-critical-bg'),
         },
       },
       fontFamily: {
@@ -84,15 +92,15 @@ module.exports = {
         '2.5xl': '12px',
       },
       boxShadow: {
-        'focus-primary': '0 0 0 3px rgba(22,163,74,0.22)',
-        'ring-selected': '0 0 0 2px rgba(22,163,74,0.32)',
-        'ring-next': '0 0 0 3px rgba(22,163,74,0.16)',
-        inner: 'inset 0 1px 2px rgba(10,10,10,0.04)',
-        card: '0 1px 2px rgba(10,10,10,0.03), 0 2px 8px rgba(10,10,10,0.04)',
-        panel: '0 4px 20px rgba(10,10,10,0.06)',
-        pop: '0 12px 32px rgba(10,10,10,0.08)',
-        glass: '0 2px 16px rgba(10,10,10,0.05)',
-        sheet: '0 2px 20px rgba(10,10,10,0.06)',
+        'focus-primary': '0 0 0 3px rgba(37, 99, 235, 0.22)',
+        'ring-selected': '0 0 0 2px rgba(37, 99, 235, 0.32)',
+        'ring-next': '0 0 0 3px rgba(37, 99, 235, 0.16)',
+        inner: 'inset 0 1px 2px rgba(0,0,0,0.04)',
+        card: '0 4px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.03)',
+        panel: '0 10px 15px rgba(0,0,0,0.08)',
+        pop: '0 20px 25px rgba(0,0,0,0.1)',
+        glass: '0 4px 16px rgba(0,0,0,0.05)',
+        sheet: '0 10px 25px rgba(0,0,0,0.08)',
       },
       keyframes: {
         'drawer-in': {

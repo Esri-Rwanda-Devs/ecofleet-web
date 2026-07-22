@@ -113,7 +113,7 @@ export function AlertsFeed({ alerts }: { alerts: AlertEvent[] }) {
         <BellIcon size={17} />
         {unread > 0 && (
           <span
-            className="num absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-danger px-1 text-[12px] font-bold leading-none text-white"
+            className="num absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent px-1 text-[12px] font-bold leading-none text-white"
             aria-hidden="true"
           >
             {unread > 9 ? '9+' : unread}
