@@ -27,6 +27,7 @@
   <div id="viewDiv"></div>
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
+    var busStopsFeatureLayer = null, busRoutesFeatureLayer = null;
     var highlightGraphic = null, highlightStopId = null;
     var followingTripId = null;
     var pendingFocusTripId = null;
@@ -36,6 +37,10 @@
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
+    var stopsLayerUrl = params.get('stopsLayer') ||
+      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
+    var routesLayerUrl = params.get('routesLayer') ||
+      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -54,28 +59,136 @@
         'esri/Map',
         'esri/views/MapView',
         'esri/layers/GraphicsLayer',
+        'esri/layers/FeatureLayer',
         'esri/layers/OpenStreetMapLayer',
         'esri/Basemap',
-        'esri/identity/IdentityManager'
-      ], function(Map, MapView, GraphicsLayer, OpenStreetMapLayer, Basemap, identityManager) {
+        'esri/identity/IdentityManager',
+        'esri/config'
+      ], function(Map, MapView, GraphicsLayer, FeatureLayer, OpenStreetMapLayer, Basemap, identityManager, esriConfig) {
 
         if (arcgisToken) {
           try {
+            var expires = Date.now() + 7200000;
+            // Portal generateToken (referer client) — needed for authenticated services.
             identityManager.registerToken({
               server: portalUrl.replace(/\/$/, '') + '/sharing/rest',
               token: arcgisToken,
-              expires: Date.now() + 7200000,
+              expires: expires,
               ssl: true
+            });
+            // FeatureServer lives on the ArcGIS Server host, not the portal.
+            identityManager.registerToken({
+              server: 'https://esrirw.rw/server',
+              token: arcgisToken,
+              expires: expires,
+              ssl: true
+            });
+            identityManager.registerToken({
+              server: 'https://esrirw.rw/server/rest/services',
+              token: arcgisToken,
+              expires: expires,
+              ssl: true
+            });
+            // Belt-and-suspenders: always attach the portal token to Bus_Lanes_BTS requests.
+            esriConfig.request.interceptors.push({
+              urls: /esrirw\.rw\/server\/rest\/services\/Bus_Lanes_BTS/i,
+              before: function(params) {
+                params.requestOptions = params.requestOptions || {};
+                params.requestOptions.query = params.requestOptions.query || {};
+                if (!params.requestOptions.query.token) {
+                  params.requestOptions.query.token = arcgisToken;
+                }
+              }
             });
           } catch (e) {}
         }
 
-        routeLayer = new GraphicsLayer({ listMode: 'hide' });
-        stopLayer = new GraphicsLayer({ listMode: 'hide' });
-        vehicleLayer = new GraphicsLayer({ listMode: 'hide' });
+        // Network-wide background layers from Bus_Lanes_BTS FeatureServer.
+        // Selected trip route/stops still render on GraphicsLayers above these.
+        busRoutesFeatureLayer = new FeatureLayer({
+          url: routesLayerUrl,
+          title: 'Bus lanes',
+          outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+          opacity: 0.85,
+          popupEnabled: true,
+          popupTemplate: {
+            title: '{route_name}',
+            content: [
+              {
+                type: 'fields',
+                fieldInfos: [
+                  { fieldName: 'route_id', label: 'Route ID' },
+                  { fieldName: 'corridor', label: 'Corridor' },
+                  { fieldName: 'direction', label: 'Direction' },
+                  { fieldName: 'length_km', label: 'Length (km)' }
+                ]
+              }
+            ]
+          },
+          renderer: {
+            type: 'simple',
+            symbol: {
+              type: 'simple-line',
+              color: [56, 189, 248, 0.75],
+              width: 2.5,
+              style: 'solid'
+            }
+          }
+        });
+
+        busStopsFeatureLayer = new FeatureLayer({
+          url: stopsLayerUrl,
+          title: 'Bus stops',
+          outFields: ['stop_id', 'name', 'speed_kmh'],
+          popupEnabled: true,
+          popupTemplate: {
+            title: '{name}',
+            content: [
+              {
+                type: 'fields',
+                fieldInfos: [
+                  { fieldName: 'stop_id', label: 'Stop ID' },
+                  { fieldName: 'speed_kmh', label: 'Speed (km/h)' }
+                ]
+              }
+            ]
+          },
+          renderer: {
+            type: 'simple',
+            symbol: {
+              type: 'simple-marker',
+              style: 'circle',
+              color: [245, 158, 11, 0.9],
+              size: 7,
+              outline: { color: [255, 255, 255, 0.95], width: 1.5 }
+            }
+          },
+          labelingInfo: [{
+            labelExpressionInfo: { expression: '$feature.name' },
+            labelPlacement: 'above-center',
+            minScale: 40000,
+            symbol: {
+              type: 'text',
+              color: '#fff',
+              haloColor: '#0f172a',
+              haloSize: 1.5,
+              font: { size: 9, weight: 'bold' }
+            }
+          }]
+        });
+
+        routeLayer = new GraphicsLayer({ title: 'Selected route', listMode: 'hide' });
+        stopLayer = new GraphicsLayer({ title: 'Selected stops', listMode: 'hide' });
+        vehicleLayer = new GraphicsLayer({ title: 'Vehicles', listMode: 'hide' });
 
         var map = new Map({ basemap: 'satellite' });
-        map.addMany([routeLayer, stopLayer, vehicleLayer]);
+        map.addMany([
+          busRoutesFeatureLayer,
+          busStopsFeatureLayer,
+          routeLayer,
+          stopLayer,
+          vehicleLayer
+        ]);
         window.__basemapName = 'satellite';
 
         view = new MapView({
@@ -87,6 +200,8 @@
           ui: { components: [] }
         });
 
+        // Only selected-trip graphics drive fleet/arrivals UI — keep FeatureLayer
+        // interactions as popups so backend UUID-based workflows stay intact.
         view.on('click', function(event) {
           view.hitTest(event, { include: [vehicleLayer, stopLayer] }).then(function(res) {
             var vehicleHit = res.results.find(function(r) {
