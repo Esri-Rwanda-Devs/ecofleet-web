@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { BUS_ROUTES_LAYER_URL, BUS_STOPS_LAYER_URL } from '../arcgis/constants';
+import { BUS_ROUTES_DEFINITION_EXPRESSION, BUS_ROUTES_LAYER_URL, BUS_STOPS_LAYER_URL } from '../arcgis/constants';
 import type { ArcGisConfig, BusStop, TripTrackingState } from '../types';
 
 const ENV_ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || '';
@@ -14,12 +14,19 @@ function buildMapUrl(config: ArcGisConfig): string {
     config.buslane?.stopsLayerUrl ||
     config.buslane?.busStopsUrl ||
     BUS_STOPS_LAYER_URL;
-  const routesUrl =
+  const routesUrl = (
     config.buslane?.routesLayerUrl ||
     config.buslane?.busRoutesUrl ||
-    BUS_ROUTES_LAYER_URL;
+    BUS_ROUTES_LAYER_URL
+  )
+    .split('/query')[0]
+    .replace(/\/$/, '');
   params.set('stopsLayer', stopsUrl);
   params.set('routesLayer', routesUrl);
+  params.set(
+    'routesWhere',
+    config.buslane?.routesWhere || BUS_ROUTES_DEFINITION_EXPRESSION,
+  );
   const qs = params.toString();
   return qs ? `/operations-map.html?${qs}` : '/operations-map.html';
 }
@@ -68,6 +75,7 @@ export function OperationsMap({
       config.arcgisToken,
       config.buslane?.stopsLayerUrl,
       config.buslane?.routesLayerUrl,
+      config.buslane?.routesWhere,
       config.buslane?.busStopsUrl,
       config.buslane?.busRoutesUrl,
     ],

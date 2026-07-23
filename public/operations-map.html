@@ -41,6 +41,9 @@
       'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
     var routesLayerUrl = params.get('routesLayer') ||
       'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
+    // Strip accidental /query?... suffixes — FeatureLayer needs the layer root URL.
+    routesLayerUrl = String(routesLayerUrl).split('/query')[0].replace(/\/$/, '');
+    var routesDefinition = params.get('routesWhere') || 'active = 1';
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -107,8 +110,9 @@
         // Selected trip route/stops still render on GraphicsLayers above these.
         busRoutesFeatureLayer = new FeatureLayer({
           url: routesLayerUrl,
-          title: 'Bus lanes',
-          outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+          title: 'Bus lanes (active)',
+          definitionExpression: routesDefinition,
+          outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km', 'active'],
           opacity: 0.85,
           popupEnabled: true,
           popupTemplate: {
@@ -120,7 +124,8 @@
                   { fieldName: 'route_id', label: 'Route ID' },
                   { fieldName: 'corridor', label: 'Corridor' },
                   { fieldName: 'direction', label: 'Direction' },
-                  { fieldName: 'length_km', label: 'Length (km)' }
+                  { fieldName: 'length_km', label: 'Length (km)' },
+                  { fieldName: 'active', label: 'Active' }
                 ]
               }
             ]

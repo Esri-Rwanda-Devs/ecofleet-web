@@ -115,6 +115,8 @@ export interface BuslaneConfig {
   /** Preferred FeatureServer layer URLs (Bus_Lanes_BTS). */
   stopsLayerUrl?: string;
   routesLayerUrl?: string;
+  /** SQL filter for routes FeatureLayer (default: active = 1). */
+  routesWhere?: string;
   /** Legacy field names kept optional for older clients. */
   busStopsUrl?: string;
   busRoutesUrl?: string;
