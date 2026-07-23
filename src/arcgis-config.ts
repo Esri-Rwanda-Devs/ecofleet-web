@@ -5,7 +5,7 @@
 import esriConfig from '@arcgis/core/config';
 
 const ARCGIS_VERSION = '4.31';
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://esrirw.rw:8000' || 'http://localhost:8000';
 const ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || null;
 
 // Required for @arcgis/core + Vite — without this the map view stays blank

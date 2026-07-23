@@ -8,11 +8,11 @@ import type {
   TripTrackingState,
 } from '../types';
 
-// Production uses same-origin paths (proxied to Render via vercel.json) to avoid CORS.
-// Local/dev keeps VITE_API_URL (or localhost) so the Vite app can call the API directly.
-const API_URL = import.meta.env.PROD
-  ? ''
-  : import.meta.env.VITE_API_URL || 'http://localhost:8000';
+/** Always call the Nest backend — never the UI origin. */
+const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  'https://esrirw.rw:8000'
+).replace(/\/$/, '');
 
 class ApiClient {
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {

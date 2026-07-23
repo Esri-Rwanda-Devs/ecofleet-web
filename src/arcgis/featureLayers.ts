@@ -4,7 +4,7 @@ import SimpleMarkerSymbol from '@arcgis/core/symbols/SimpleMarkerSymbol';
 import SimpleLineSymbol from '@arcgis/core/symbols/SimpleLineSymbol';
 import PopupTemplate from '@arcgis/core/PopupTemplate';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://esrirw.rw:8000' || 'http://localhost:8000';
 
 export type BuslaneLayer = GeoJSONLayer;
 
