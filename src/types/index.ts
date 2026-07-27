@@ -41,6 +41,10 @@ export interface StopEta {
   delay_seconds?: number;
   remaining_distance_meters: number;
   remaining_duration_seconds: number;
+  /** ISO predicted arrival at this stop (live). */
+  estimated_arrival_at?: string | null;
+  /** ISO scheduled / expected arrival — delay = estimated − scheduled. */
+  scheduled_arrival_at?: string | null;
   leg_distance_meters?: number;
   leg_duration_seconds?: number;
   leg_eta?: string;
@@ -96,8 +100,6 @@ export interface TripTrackingState {
   delay_seconds: number;
   is_delayed: boolean;
   is_early: boolean;
-  /** True after the driver explicitly starts the trip — journey delay clock is running. */
-  delay_clock_active?: boolean;
   delay_status?: string;
   early_status?: string;
   gps_connected: boolean;

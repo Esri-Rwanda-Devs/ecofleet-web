@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { getSocket } from '../services/socket';
 import {
   correctTrackingForOrigin,
+  dedupeRouteStops,
   updateVisitedStops,
 } from '../utils/tracking-corrections';
 import { OperationsMap } from '../components/OperationsMap';
@@ -87,18 +88,6 @@ function StatItem({
     );
   }
   return <div className={`stat-strip__item ${className}`}>{content}</div>;
-}
-
-/** One marker per sequence slot — GDB can duplicate rows for the same stop_order. */
-function dedupeRouteStops(stops: BusStop[]): BusStop[] {
-  const seen = new Set<number>();
-  return [...stops]
-    .sort((a, b) => a.sequence_order - b.sequence_order)
-    .filter((s) => {
-      if (seen.has(s.sequence_order)) return false;
-      seen.add(s.sequence_order);
-      return true;
-    });
 }
 
 async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; stops: BusStop[] }> {

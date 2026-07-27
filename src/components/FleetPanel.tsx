@@ -34,11 +34,33 @@ function formatDuration(seconds: number): string {
 }
 
 function nextStopMeta(t: TripTrackingState): { name: string; eta: string } | null {
-  const next = t.stop_etas[0];
+  // Full-journey stop_etas includes passed stops first — skip those.
+  const upcoming = (t.stop_etas ?? []).filter((s) => s.status !== 'passed');
+  let next =
+    upcoming.find((s) => (s.remaining_distance_meters ?? 0) > 5) ??
+    upcoming[0] ??
+    null;
+
+  // Prefer the backend's named next stop when present (avoids stale origin).
+  if (t.next_stop_name) {
+    const target = formatStopName(t.next_stop_name).toLowerCase();
+    const byName = upcoming.find(
+      (s) => formatStopName(s.stop_name).toLowerCase() === target
+    );
+    if (byName) next = byName;
+  }
+  if (t.next_stop_sequence != null) {
+    const bySeq = upcoming.find((s) => s.sequence_order === t.next_stop_sequence);
+    if (bySeq) next = bySeq;
+  }
+
   const name = formatStopName(next?.stop_name ?? t.next_stop_name);
-  const seconds = next?.remaining_duration_seconds ?? t.remaining_duration_seconds;
+  const seconds = next?.remaining_duration_seconds;
   if (!name) return null;
-  return { name, eta: formatDuration(seconds) };
+  return {
+    name,
+    eta: seconds != null ? formatDuration(seconds) : '—',
+  };
 }
 
 function fleetLiveMetrics(t: TripTrackingState): {
