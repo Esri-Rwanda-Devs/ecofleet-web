@@ -45,6 +45,8 @@ export interface StopEta {
   leg_duration_seconds?: number;
   leg_eta?: string;
   segment_speed_kmh?: number;
+  /** passed | upcoming — full journey lists include both. */
+  status?: 'passed' | 'upcoming';
 }
 
 /** One bus heading to a station, from GET /tracking/station/{stop_id}/arrivals. */
@@ -81,6 +83,7 @@ export interface TripTrackingState {
   in_service?: boolean;
   current_stop_name?: string;
   next_stop_name?: string;
+  next_stop_sequence?: number;
   remaining_distance_meters: number;
   remaining_duration_seconds: number;
   /** Planned duration for the full trip to destination. */
@@ -88,10 +91,13 @@ export interface TripTrackingState {
   /** Sum of route leg distance/duration to destination. */
   segment_totals?: SegmentTotals;
   eta: string;
+  estimated_arrival_at?: string;
   completion_percentage: number;
   delay_seconds: number;
   is_delayed: boolean;
   is_early: boolean;
+  /** True after the driver explicitly starts the trip — journey delay clock is running. */
+  delay_clock_active?: boolean;
   delay_status?: string;
   early_status?: string;
   gps_connected: boolean;

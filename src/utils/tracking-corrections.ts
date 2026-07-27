@@ -1,4 +1,6 @@
 import type { BusStop, StopEta, TripTrackingState } from '../types';
+import { dedupeStopEtas } from './stop-etas';
+import { stopIdsMatch } from './stop-ids';
 
 /** Radius within which the bus counts as having visited a stop. */
 export const STOP_VISIT_RADIUS_M = 40;
@@ -39,6 +41,14 @@ export function updateVisitedStops(
   }
 }
 
+function originAlreadyListed(stops: StopEta[], origin: BusStop): boolean {
+  return stops.some(
+    (s) =>
+      stopIdsMatch(s.stop_id, origin.id) ||
+      s.sequence_order === origin.sequence_order
+  );
+}
+
 /**
  * The backend snaps the bus onto the route polyline, so the origin (at ~0 m
  * along the path) reads as "passed" the moment a trip starts — wherever the
@@ -55,7 +65,11 @@ export function correctTrackingForOrigin(
 
   const origin = [...stops].sort((a, b) => a.sequence_order - b.sequence_order)[0];
   if (visited.has(origin.id)) return trip;
-  if (trip.stop_etas.some((s) => s.stop_id === origin.id)) return trip;
+
+  const listed = dedupeStopEtas(trip.stop_etas);
+  if (originAlreadyListed(listed, origin)) {
+    return { ...trip, stop_etas: listed };
+  }
 
   const distM = haversineMeters(
     trip.latitude,
@@ -70,6 +84,7 @@ export function correctTrackingForOrigin(
     stop_id: origin.id,
     stop_name: origin.name,
     sequence_order: origin.sequence_order,
+    status: 'upcoming',
     eta: '',
     remaining_distance_meters: Math.round(distM),
     remaining_duration_seconds: seconds,
@@ -77,22 +92,16 @@ export function correctTrackingForOrigin(
 
   return {
     ...trip,
-    // Renders the "En route" placeholder while still heading to the origin.
     current_stop_name: undefined,
     next_stop_name: origin.name,
-    stop_etas: [
+    stop_etas: dedupeStopEtas([
       originEta,
-      // The backend snaps the deadheading bus onto the route start, so its
-      // ETAs measure from the origin — add the bus→origin approach on top so
-      // the timeline stays monotonic (a stop can't be reached before the one
-      // preceding it). Clear `eta` so clock times derive from the corrected
-      // countdowns instead of the backend's un-rebased ones.
-      ...trip.stop_etas.map((s) => ({
+      ...listed.map((s) => ({
         ...s,
         eta: '',
         remaining_distance_meters: s.remaining_distance_meters + Math.round(distM),
         remaining_duration_seconds: s.remaining_duration_seconds + seconds,
       })),
-    ],
+    ]),
   };
 }

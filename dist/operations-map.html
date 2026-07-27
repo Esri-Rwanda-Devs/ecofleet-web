@@ -145,7 +145,8 @@
           url: stopsLayerUrl,
           title: 'Bus stops',
           outFields: ['stop_id', 'name', 'speed_kmh'],
-          popupEnabled: true,
+          popupEnabled: false,
+          visible: false,
           popupTemplate: {
             title: '{name}',
             content: [
@@ -263,6 +264,9 @@
 
         var polyline = data.polyline;
         var stops = data.stops || [];
+        // Route workflow: only numbered stops on the selected trip route — hide network-wide layers.
+        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = false;
+        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = stops.length === 0 && !(polyline && polyline.length >= 2);
         routePath = polyline && polyline.length >= 2 ? polyline : null;
 
         if (polyline && polyline.length >= 2) {

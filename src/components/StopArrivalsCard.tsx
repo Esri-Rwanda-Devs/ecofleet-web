@@ -14,8 +14,6 @@ interface StopArrivalsCardProps {
   stop: { id: string; name: string };
   tracking: TripTrackingState[];
   onClose: () => void;
-  /** When trip detail is open, lift the card so it stays readable on phones. */
-  tripOpen?: boolean;
 }
 
 function formatEta(seconds: number): string {
@@ -36,9 +34,13 @@ function mergeArrivals(
   tracking: TripTrackingState[],
   stopId: string
 ): LiveArrival[] {
+  const bareStopId = stopId.replace(/[{}]/g, '').toLowerCase();
+  const matchesStop = (etaStopId: string) =>
+    etaStopId.replace(/[{}]/g, '').toLowerCase() === bareStopId;
+
   const liveByTrip = new Map<string, { trip: TripTrackingState; eta: StopEta }>();
   for (const trip of tracking) {
-    const eta = trip.stop_etas?.find((s) => s.stop_id === stopId);
+    const eta = trip.stop_etas?.find((s) => matchesStop(s.stop_id));
     if (eta) liveByTrip.set(trip.trip_id, { trip, eta });
   }
 
@@ -46,8 +48,9 @@ function mergeArrivals(
   const seen = new Set<string>();
 
   for (const arrival of apiArrivals ?? []) {
-    const live = liveByTrip.get(arrival.trip_id);
+    if (seen.has(arrival.trip_id)) continue;
     seen.add(arrival.trip_id);
+    const live = liveByTrip.get(arrival.trip_id);
     merged.push(
       live
         ? {
@@ -62,6 +65,7 @@ function mergeArrivals(
 
   for (const [tripId, { trip, eta }] of liveByTrip) {
     if (seen.has(tripId)) continue;
+    seen.add(tripId);
     merged.push({
       trip_id: tripId,
       plate_number: trip.vehicle_plate,
@@ -94,6 +98,7 @@ function formatClock(secondsFromNow: number): string {
   });
 }
 
+/** Bottom map modal — arrivals at the clicked stop. */
 export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardProps) {
   const [arrivals, setArrivals] = useState<StationArrival[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,16 +139,20 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
 
   return (
     <div
-      className="absolute bottom-5 left-5 z-20 w-[340px] max-w-[calc(100%-2.5rem)] animate-sheet-in sheet rounded-sheet p-4 max-md:inset-x-3 max-md:bottom-[calc(46vh+1.25rem)] max-md:w-auto md:left-[calc(380px+1.25rem)]"
+      className="pointer-events-auto absolute bottom-5 left-3 z-30 w-[min(340px,calc(100%-1.5rem))] animate-sheet-in sheet rounded-sheet p-4 safe-pb
+        md:left-[calc(380px+1.25rem)] md:w-[340px]
+        max-md:bottom-4"
       role="dialog"
       aria-label={`Arrivals at ${stop.name}`}
     >
       <div className="mb-3.5 flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0 pr-2">
           <p className="text-[0.75rem] font-semibold uppercase tracking-[0.07em] text-muted">
             Arrivals
           </p>
-          <h3 className="mt-0.5 text-[1.125rem] font-bold tracking-tight text-ink">{stop.name}</h3>
+          <h3 className="mt-0.5 break-words text-[1.125rem] font-bold leading-snug tracking-tight text-ink">
+            {stop.name}
+          </h3>
         </div>
         <button
           className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-bg text-muted hover:bg-line/80 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -165,10 +174,9 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
           {sorted.length === 0 ? (
             <p className="py-1 text-body text-muted">No buses heading to this stop right now</p>
           ) : (
-            <ul className="scrollbar-thin flex max-h-[260px] list-none flex-col gap-1.5 overflow-y-auto">
+            <ul className="scrollbar-thin flex max-h-[min(260px,38vh)] list-none flex-col gap-1.5 overflow-y-auto">
               {sorted.map((arrival) => {
-                const delaySec =
-                  arrival.live_delay_seconds ?? arrival.delay_minutes * 60;
+                const delaySec = arrival.live_delay_seconds ?? arrival.delay_minutes * 60;
                 const delayMins = Math.round(Math.abs(delaySec) / 60);
                 const atStation = arrival.status === 'at_station';
                 const departed = arrival.status === 'departed';
@@ -228,9 +236,7 @@ export function StopArrivalsCard({ stop, tracking, onClose }: StopArrivalsCardPr
                               : 'bg-st-early-bg text-st-early'
                           }`}
                         >
-                          {delaySec > 0
-                            ? `+${delayMins} min late`
-                            : `${delayMins} min early`}
+                          {delaySec > 0 ? `+${delayMins} min late` : `${delayMins} min early`}
                         </span>
                       )}
                     </div>

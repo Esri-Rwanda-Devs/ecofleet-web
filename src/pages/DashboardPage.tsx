@@ -89,8 +89,21 @@ function StatItem({
   return <div className={`stat-strip__item ${className}`}>{content}</div>;
 }
 
+/** One marker per sequence slot — GDB can duplicate rows for the same stop_order. */
+function dedupeRouteStops(stops: BusStop[]): BusStop[] {
+  const seen = new Set<number>();
+  return [...stops]
+    .sort((a, b) => a.sequence_order - b.sequence_order)
+    .filter((s) => {
+      if (seen.has(s.sequence_order)) return false;
+      seen.add(s.sequence_order);
+      return true;
+    });
+}
+
 async function loadRouteForMap(route: Route): Promise<{ polyline?: number[][]; stops: BusStop[] }> {
-  const { route: detail, stops } = await api.getRoute(route.id);
+  const { route: detail, stops: rawStops } = await api.getRoute(route.id);
+  const stops = dedupeRouteStops(rawStops);
 
   const storedPolyline = parseRoutePolyline(
     detail.route_polyline as Parameters<typeof parseRoutePolyline>[0]
@@ -188,6 +201,16 @@ export function DashboardPage() {
     setFitBoundsKey((k) => k + 1);
   }, []);
 
+  const selectTrip = useCallback((tripId: string | undefined) => {
+    setSelectedStop(null);
+    setSelectedTripId(tripId);
+  }, []);
+
+  const toggleTrip = useCallback((tripId: string) => {
+    setSelectedStop(null);
+    setSelectedTripId((prev) => (prev === tripId ? undefined : tripId));
+  }, []);
+
   /** Zoom + highlight a bus stop (timeline number or map marker). */
   const focusStopOnMap = useCallback(
     (stop: { id: string; name: string; longitude?: number; latitude?: number }) => {
@@ -245,7 +268,8 @@ export function DashboardPage() {
     const route = routesRef.current.find((r) => r.name === routeName);
     if (!route) return undefined;
     try {
-      const { stops } = await api.getRoute(route.id);
+      const { stops: raw } = await api.getRoute(route.id);
+      const stops = dedupeRouteStops(raw);
       routeStopsRef.current.set(routeName, stops);
       return stops;
     } catch {
@@ -638,7 +662,7 @@ export function DashboardPage() {
             config={config}
             tracking={mapTracking}
             selectedRoute={mapRouteDisplay}
-            onVehicleClick={setSelectedTripId}
+            onVehicleClick={selectTrip}
             onStopClick={focusStopOnMap}
             highlightStopId={selectedStop?.id ?? searchHighlightStopId}
             followTripId={selectedTripId ?? null}
@@ -661,9 +685,7 @@ export function DashboardPage() {
             totalFleetCount={tracking.length}
             delayedFilter={statFocus === 'delayed'}
             selectedTripId={selectedTripId}
-            onSelectTrip={(tripId) =>
-              setSelectedTripId((prev) => (prev === tripId ? undefined : tripId))
-            }
+            onSelectTrip={toggleTrip}
           />
         </aside>
 
@@ -681,7 +703,6 @@ export function DashboardPage() {
             stop={selectedStop}
             tracking={mapTracking}
             onClose={() => setSelectedStop(null)}
-            tripOpen={Boolean(selectedTrip)}
           />
         )}
       </div>

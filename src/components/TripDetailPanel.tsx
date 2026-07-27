@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BusStop, StopEta, TripTrackingState } from '../types';
 import { BusIcon, CheckIcon, ChevronDownIcon, CloseIcon } from './Icons';
 import {
@@ -6,6 +6,8 @@ import {
   delayViewFromSeconds,
 } from './StatusChips';
 import { formatRouteName, formatStopName } from '../utils/display-names';
+import { partitionStopEtas } from '../utils/stop-etas';
+import { stopIdsMatch } from '../utils/stop-ids';
 
 interface TripDetailPanelProps {
   trip: TripTrackingState;
@@ -62,6 +64,51 @@ function clockIn(seconds: number): string {
   });
 }
 
+function destArrivalClock(liveDestSeconds: number): string {
+  return clockIn(liveDestSeconds);
+}
+
+/** Tick countdown between GPS/socket updates. */
+function useLiveSeconds(baseSeconds: number, lastUpdated: string): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  void tick;
+  const ageSec = Math.max(0, (Date.now() - new Date(lastUpdated).getTime()) / 1000);
+  return Math.max(0, baseSeconds - ageSec);
+}
+
+function journeyDelayLabel(seconds: number): { label: string; tone: string } {
+  const view = delayViewFromSeconds(seconds);
+  const tone =
+    view.tone === 'late'
+      ? 'text-danger'
+      : view.tone === 'early'
+        ? 'text-st-early'
+        : view.tone === 'ontime'
+          ? 'text-success'
+          : 'text-muted';
+  return { label: view.tone === 'ontime' ? 'On time' : view.label, tone };
+}
+
+function resolveNextStop(trip: TripTrackingState, upcoming: StopEta[]): StopEta | null {
+  if (!upcoming.length) return null;
+  if (trip.next_stop_sequence != null) {
+    const bySeq = upcoming.find((s) => s.sequence_order === trip.next_stop_sequence);
+    if (bySeq) return bySeq;
+  }
+  if (trip.next_stop_name) {
+    const target = formatStopName(trip.next_stop_name).toLowerCase();
+    const byName = upcoming.find(
+      (s) => formatStopName(s.stop_name).toLowerCase() === target
+    );
+    if (byName) return byName;
+  }
+  return upcoming.find((s) => s.remaining_distance_meters > 5) ?? upcoming[0];
+}
+
 /** Uppercase micro-label used across the metric strip. */
 const METRIC_LABEL = 'mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted';
 
@@ -73,6 +120,11 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
     routeStops?.forEach((s) => map.set(s.id, s));
     return map;
   }, [routeStops]);
+
+  const orderedRouteStops = useMemo(
+    () => (routeStops ? [...routeStops].sort((a, b) => a.sequence_order - b.sequence_order) : []),
+    [routeStops]
+  );
 
   const focusStop = (id: string, name: string) => {
     if (!onStopNumberClick) return;
@@ -86,37 +138,63 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
     });
   };
 
-  // Stops already behind the bus: route stops that sit before the first
-  // upcoming stop in sequence and are no longer in the live ETA list.
+  // Stops already behind the bus — prefer live `status: passed` from tracking.
+  const { passed: passedFromEta, upcoming: upcomingStops } = useMemo(
+    () => partitionStopEtas(trip.stop_etas),
+    [trip.stop_etas]
+  );
+
   const passedStops = useMemo(() => {
-    if (!routeStops?.length || !trip.stop_etas.length) return [];
-    const upcomingIds = new Set(trip.stop_etas.map((s) => s.stop_id));
+    if (passedFromEta.length) {
+      return passedFromEta
+        .map((s) => coordsById.get(s.stop_id))
+        .filter((s): s is BusStop => Boolean(s));
+    }
+    if (!routeStops?.length || !upcomingStops.length) return [];
+    const upcomingIds = new Set(upcomingStops.map((s) => s.stop_id));
     const ordered = [...routeStops].sort((a, b) => a.sequence_order - b.sequence_order);
     const firstUpcoming = ordered.find((s) => upcomingIds.has(s.id));
     if (!firstUpcoming) return [];
     return ordered.filter(
       (s) => s.sequence_order < firstUpcoming.sequence_order && !upcomingIds.has(s.id)
     );
-  }, [routeStops, trip.stop_etas]);
+  }, [passedFromEta, routeStops, upcomingStops, coordsById]);
 
   // 1-based stop numbers that match the numbered labels on the map. Prefer
   // the route's own stop order; fall back to position in the live list.
   const stopNumber = useMemo(() => {
     const byId = new Map<string, number>();
-    if (routeStops?.length) {
-      [...routeStops]
-        .sort((a, b) => a.sequence_order - b.sequence_order)
-        .forEach((s, i) => byId.set(s.id, i + 1));
-    }
-    return (s: StopEta, i: number) => byId.get(s.stop_id) ?? passedStops.length + i + 1;
-  }, [routeStops, passedStops.length]);
+    orderedRouteStops.forEach((s) => byId.set(s.id, s.sequence_order));
+    return (s: StopEta) => {
+      for (const [id, order] of byId) {
+        if (stopIdsMatch(id, s.stop_id)) return order;
+      }
+      return s.sequence_order;
+    };
+  }, [orderedRouteStops]);
 
   const route = formatRouteName(trip.route_name);
-  const stops = trip.stop_etas;
-  const nextStop = stops[0];
-  const totalStops = routeStops?.length ?? passedStops.length + stops.length;
-  // With no GPS the numbers below are last-known, not live — say so visually.
+  const stops = upcomingStops;
+  const nextStop = resolveNextStop(trip, upcomingStops);
+  const passedCount = Math.max(passedStops.length, passedFromEta.length);
+  const totalStops = orderedRouteStops.length || passedCount + upcomingStops.length;
+  const liveDestSeconds = useLiveSeconds(trip.remaining_duration_seconds, trip.last_updated);
+  const liveNextSeconds = useLiveSeconds(
+    nextStop?.remaining_duration_seconds ?? 0,
+    trip.last_updated
+  );
+  const journeyDelay =
+    trip.delay_clock_active === true
+      ? trip.delay_seconds
+      : trip.delay_clock_active === false
+        ? null
+        : trip.is_delayed || trip.is_early
+          ? trip.delay_seconds
+          : null;
+  const journeyDelayView =
+    journeyDelay != null ? journeyDelayLabel(journeyDelay) : null;
   const stale = !trip.gps_connected;
+  const speedDisplay = trip.gps_connected ? trip.speed_kmh.toFixed(0) : '—';
   const metricValue = `num break-words text-[1.125rem] font-semibold leading-tight tracking-tight ${
     stale ? 'text-muted' : 'text-ink'
   }`;
@@ -157,27 +235,44 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
         <div className="mint-card min-w-0 overflow-visible">
           <label className={METRIC_LABEL}>Speed</label>
           <b className={metricValue}>
-            {trip.speed_kmh.toFixed(0)}{' '}
+            {speedDisplay}{' '}
             <small className="text-[0.75rem] font-medium text-muted">km/h</small>
           </b>
         </div>
         <div className="mint-card min-w-0 overflow-visible">
           <label className={METRIC_LABEL}>Dest. ETA</label>
-          <b className={metricValue}>{formatCountdown(trip.remaining_duration_seconds)}</b>
+          <b className={metricValue}>{formatCountdown(liveDestSeconds)}</b>
           <span className="num mt-0.5 block break-words text-[0.75rem] text-muted">
-            {clockIn(trip.remaining_duration_seconds)} · {formatDistance(trip.remaining_distance_meters)}
+            {destArrivalClock(liveDestSeconds)} · {formatDistance(trip.remaining_distance_meters)}
           </span>
+          {journeyDelayView && (
+            <span
+              className={`num mt-1 block text-[0.75rem] font-semibold ${journeyDelayView.tone}`}
+            >
+              Journey {journeyDelayView.label}
+            </span>
+          )}
         </div>
         <div className="mint-card min-w-0 overflow-visible">
           <label className={METRIC_LABEL}>Next stop</label>
           <b className={metricValue}>
-            {nextStop ? formatCountdown(nextStop.remaining_duration_seconds) : '—'}
+            {nextStop ? formatCountdown(liveNextSeconds) : '—'}
           </b>
           <span
             className="mt-0.5 block break-words text-[0.75rem] leading-snug text-muted"
-            title={nextStop ? formatStopName(nextStop.stop_name) : undefined}
+            title={
+              nextStop
+                ? formatStopName(nextStop.stop_name)
+                : trip.next_stop_name
+                  ? formatStopName(trip.next_stop_name)
+                  : undefined
+            }
           >
-            {nextStop ? formatStopName(nextStop.stop_name) : 'Arriving'}
+            {nextStop
+              ? formatStopName(nextStop.stop_name)
+              : trip.next_stop_name
+                ? formatStopName(trip.next_stop_name)
+                : 'Arriving'}
           </span>
         </div>
       </div>
@@ -192,7 +287,7 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
           </p>
         ) : (
           <ol className="relative mt-2 list-none before:absolute before:bottom-4 before:left-[11px] before:top-3 before:w-px before:bg-line/70 before:content-['']">
-            {passedStops.length > 0 && (
+            {passedCount > 0 && (
               <li className="relative pb-5 pl-10">
                 <span
                   className="absolute left-0 top-0.5 z-[1] flex h-6 w-6 items-center justify-center rounded-full border border-line bg-muted-bg text-success"
@@ -205,7 +300,7 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
                   onClick={() => setShowPassed((v) => !v)}
                   aria-expanded={showPassed}
                 >
-                  {passedStops.length} {passedStops.length === 1 ? 'stop' : 'stops'} passed
+                  {passedCount} {passedCount === 1 ? 'stop' : 'stops'} passed
                   <ChevronDownIcon
                     size={13}
                     className={`transition-transform duration-200 ease-smooth ${showPassed ? 'rotate-180' : ''}`}
@@ -213,18 +308,25 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
                 </button>
                 {showPassed && (
                   <ul className="mt-2 list-none space-y-1">
-                    {passedStops.map((s, pi) => (
+                    {(passedStops.length
+                      ? passedStops.map((s) => ({ id: s.id, name: s.name, coords: s }))
+                      : passedFromEta.map((s) => ({
+                          id: s.stop_id,
+                          name: s.stop_name,
+                          coords: coordsById.get(s.stop_id),
+                        }))
+                    ).map((s, pi) => (
                       <li key={s.id} className="text-[0.875rem] text-muted">
-                        {onStopNumberClick ? (
+                        {onStopNumberClick && s.coords ? (
                           <button
                             type="button"
                             className="pressable inline-flex items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-muted-bg hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                             onClick={() =>
                               onStopNumberClick({
-                                id: s.id,
-                                name: s.name,
-                                longitude: s.longitude,
-                                latitude: s.latitude,
+                                id: s.coords!.id,
+                                name: s.coords!.name,
+                                longitude: s.coords!.longitude,
+                                latitude: s.coords!.latitude,
                               })
                             }
                             aria-label={`Show stop ${pi + 1} on map: ${formatStopName(s.name)}`}
@@ -256,7 +358,7 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
                   {trip.vehicle_plate}
                 </span>
                 <span className="num text-[0.8125rem] font-medium text-white/70">
-                  {trip.speed_kmh.toFixed(0)} km/h
+                  {speedDisplay} km/h
                 </span>
               </div>
             </li>
@@ -293,22 +395,22 @@ export function TripDetailPanel({ trip, routeStops, onStopNumberClick, onClose }
                     pressable transition-transform duration-200 ease-smooth hover:scale-105
                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${nodeTone}`}
                   onClick={() => focusStop(s.stop_id, s.stop_name)}
-                  aria-label={`Show stop ${stopNumber(s, i)} on map: ${hereName}`}
+                  aria-label={`Show stop ${stopNumber(s)} on map: ${hereName}`}
                   title="Show on map"
                 >
-                  {stopNumber(s, i)}
+                  {stopNumber(s)}
                 </button>
               ) : (
                 <span
                   className={`num absolute left-0 top-2.5 z-[1] flex h-6 w-6 items-center justify-center border text-[0.75rem] font-bold ${nodeTone}`}
                   aria-hidden="true"
                 >
-                  {stopNumber(s, i)}
+                  {stopNumber(s)}
                 </span>
               );
 
               return (
-                <li key={s.stop_id} className="relative pb-3.5 pl-10 last:pb-0">
+                <li key={`${s.sequence_order}-${s.stop_id}`} className="relative pb-3.5 pl-10 last:pb-0">
                   {stopBtn}
                   <div
                     className={`relative rounded-2xl px-3.5 py-3 transition-colors duration-200 ${
