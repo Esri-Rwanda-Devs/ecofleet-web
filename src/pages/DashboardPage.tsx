@@ -546,11 +546,11 @@ export function DashboardPage() {
                   value={overview?.buses_available ?? '—'}
                   className="hidden xl:flex"
                 />
-                <StatItem
+                {/* <StatItem
                   label="done"
                   value={overview?.completed_trips_today ?? '—'}
                   className="hidden 2xl:flex"
-                />
+                /> */}
               </div>
             </div>
 

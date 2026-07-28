@@ -379,6 +379,35 @@ export function TripDetailPanel({
         </div>
       </div>
 
+      <div className="mx-4 mt-3 shrink-0">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted">
+            Route progress
+          </span>
+          <span className="num text-[0.8125rem] font-semibold text-ink">
+            {Math.round(Math.min(100, Math.max(0, trip.completion_percentage)))}%
+            <span className="ml-1.5 font-medium text-muted">
+              · {passedCount}/{totalStops} stops
+            </span>
+          </span>
+        </div>
+        <div
+          className="h-2 overflow-hidden rounded-full bg-line/70"
+          role="progressbar"
+          aria-valuenow={Math.round(trip.completion_percentage)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Route completion"
+        >
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-700 ease-smooth"
+            style={{
+              width: `${Math.min(100, Math.max(0, trip.completion_percentage))}%`,
+            }}
+          />
+        </div>
+      </div>
+
       <div className="shrink-0 px-5 pb-1.5 pt-5 text-[0.75rem] font-semibold uppercase tracking-[0.07em] text-muted">
         Route · {totalStops} stops
       </div>

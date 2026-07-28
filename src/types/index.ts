@@ -92,6 +92,10 @@ export interface TripTrackingState {
   remaining_duration_seconds: number;
   /** Planned duration for the full trip to destination. */
   total_duration_seconds?: number;
+  /** Full journey distance (origin → destination) in meters. */
+  total_distance_meters?: number;
+  /** Distance already covered along the journey in meters. */
+  traveled_distance_meters?: number;
   /** Sum of route leg distance/duration to destination. */
   segment_totals?: SegmentTotals;
   eta: string;
@@ -99,6 +103,10 @@ export interface TripTrackingState {
   /** Scheduled destination arrival from the Start-frozen plan (backend). */
   scheduled_arrival_at?: string | null;
   completion_percentage: number;
+  /** Stops already passed on this trip (origin-relative). */
+  stops_passed?: number;
+  /** Total stops on this journey (origin → destination). */
+  stops_total?: number;
   delay_seconds: number;
   is_delayed: boolean;
   is_early: boolean;

@@ -268,17 +268,18 @@
         if (busStopsFeatureLayer) busStopsFeatureLayer.visible = false;
         if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = stops.length === 0 && !(polyline && polyline.length >= 2);
         routePath = polyline && polyline.length >= 2 ? polyline : null;
+        routeStopsCache = stops;
+        lastProgressKey = '';
 
         if (polyline && polyline.length >= 2) {
-          var line = new Polyline({ paths: [polyline] });
-          routeLayer.add(new Graphic({
-            geometry: line,
-            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
-          }));
-          routeLayer.add(new Graphic({
-            geometry: line,
-            symbol: new SimpleLineSymbol({ color: '#16A34A', width: 3, cap: 'round', join: 'round' })
-          }));
+          var followFe = followingTripId && vehicleMarkers[followingTripId]
+            ? vehicleMarkers[followingTripId]
+            : null;
+          if (followFe) {
+            paintRouteProgress(followFe.lon, followFe.lat);
+          } else {
+            paintRouteProgress(null, null);
+          }
 
           if (!followingTripId && !pendingFocusTripId && Date.now() >= routeZoomSuppressedUntil) {
             var lngs = polyline.map(function(c) { return c[0]; });
@@ -357,6 +358,92 @@
     var vehicleAnimRunning = false;
     var svgIconCache = {};
     var routePath = null;
+    var routeStopsCache = [];
+    var lastProgressKey = '';
+
+    /** Split [lng,lat][] at the nearest vertex to the bus → traversed + remaining. */
+    function splitRouteAtBus(path, lon, lat) {
+      if (!path || path.length < 2) return null;
+      var cosLat = Math.cos(lat * Math.PI / 180);
+      var best = 0, bestD = Infinity;
+      for (var i = 0; i < path.length; i++) {
+        var dx = (path[i][0] - lon) * cosLat;
+        var dy = path[i][1] - lat;
+        var d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      var traversed = path.slice(0, Math.max(1, best + 1));
+      var remaining = path.slice(Math.max(0, best));
+      if (remaining.length < 2) remaining = path.slice(Math.max(0, path.length - 2));
+      if (traversed.length < 2) traversed = path.slice(0, 2);
+      // Ensure bus position is the join point.
+      traversed[traversed.length - 1] = [lon, lat];
+      remaining[0] = [lon, lat];
+      return { traversed: traversed, remaining: remaining };
+    }
+
+    function paintRouteProgress(lon, lat) {
+      if (!routeLayer || !routePath || routePath.length < 2) return;
+      var key = (lon != null ? lon.toFixed(5) : '') + ':' + (lat != null ? lat.toFixed(5) : '');
+      if (key && key === lastProgressKey) return;
+      lastProgressKey = key;
+
+      require([
+        'esri/Graphic', 'esri/geometry/Polyline', 'esri/symbols/SimpleLineSymbol'
+      ], function(Graphic, Polyline, SimpleLineSymbol) {
+        // Keep stop markers; only rebuild route line graphics.
+        var keepStops = [];
+        routeLayer.graphics.forEach(function(g) {
+          // route lines have no attributes.kind; stops live on stopLayer
+        });
+        // Clear only polyline graphics by removing all from routeLayer (stops are on stopLayer).
+        routeLayer.removeAll();
+
+        var split = (lon != null && lat != null) ? splitRouteAtBus(routePath, lon, lat) : null;
+        if (split) {
+          // Traversed (behind the bus) — muted
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.traversed] }),
+            symbol: new SimpleLineSymbol({
+              color: [148, 163, 184, 0.85], width: 4, cap: 'round', join: 'round'
+            })
+          }));
+          // Remaining (ahead) — bright green with white halo
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.remaining] }),
+            symbol: new SimpleLineSymbol({
+              color: [255, 255, 255, 0.95], width: 6, cap: 'round', join: 'round'
+            })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.remaining] }),
+            symbol: new SimpleLineSymbol({
+              color: '#16A34A', width: 3.5, cap: 'round', join: 'round'
+            })
+          }));
+        } else {
+          var full = new Polyline({ paths: [routePath] });
+          routeLayer.add(new Graphic({
+            geometry: full,
+            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: full,
+            symbol: new SimpleLineSymbol({ color: '#16A34A', width: 3, cap: 'round', join: 'round' })
+          }));
+        }
+      });
+    }
+
+    function refreshRouteProgressFromFollow() {
+      var id = followingTripId;
+      if (!id || !vehicleMarkers[id]) {
+        if (routePath) paintRouteProgress(null, null);
+        return;
+      }
+      var fe = vehicleMarkers[id];
+      paintRouteProgress(fe.lon, fe.lat);
+    }
 
     function svgDataUri(svg) {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
@@ -478,6 +565,10 @@
         e.lon = lon; e.lat = lat; e.hdg = hdg;
         if (followingTripId === id) {
           syncNavCamera(lon, lat, hdg, false);
+          if (now - (e._lastProgressAt || 0) > 900) {
+            e._lastProgressAt = now;
+            paintRouteProgress(lon, lat);
+          }
         }
         if (raw < 1) any = true; else e.anim = null;
       });
@@ -616,10 +707,14 @@
       var data = event.data;
       if (!data || !data.type) return;
       if (data.type === 'setRoute') drawRoute(data);
-      if (data.type === 'setTracking') drawVehicles(data.tracking);
+      if (data.type === 'setTracking') {
+        drawVehicles(data.tracking);
+        refreshRouteProgressFromFollow();
+      }
       if (data.type === 'setHighlightStop') applyHighlight(data.stopId);
       if (data.type === 'followVehicle') {
         startFollow(data.tripId || null, true);
+        refreshRouteProgressFromFollow();
       }
       if (data.type === 'setCenter' && view && !followingTripId) {
         view.goTo({

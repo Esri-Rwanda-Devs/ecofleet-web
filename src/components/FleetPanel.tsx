@@ -317,7 +317,7 @@ export function FleetPanel({
                 )}
 
                 <div
-                  className="mt-3 h-1 overflow-hidden rounded-full bg-line/70"
+                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-line/70"
                   role="progressbar"
                   aria-valuenow={Math.round(t.completion_percentage)}
                   aria-valuemin={0}
@@ -329,6 +329,9 @@ export function FleetPanel({
                     style={{ width: `${Math.min(100, Math.max(0, t.completion_percentage))}%` }}
                   />
                 </div>
+                <p className="num mt-1 text-right text-[0.6875rem] font-semibold text-muted">
+                  {Math.round(Math.min(100, Math.max(0, t.completion_percentage)))}% complete
+                </p>
               </button>
             );
           })}
