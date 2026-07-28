@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
-import { getSocket } from '../services/socket';
+import { getSocket, subscribeDispatchRooms, subscribeTripRoom } from '../services/socket';
 import {
   correctTrackingForOrigin,
   dedupeRouteStops,
   updateVisitedStops,
 } from '../utils/tracking-corrections';
+import { normalizeTripId, sameTripId } from '../utils/trip-id';
 import { OperationsMap } from '../components/OperationsMap';
 import { FleetPanel } from '../components/FleetPanel';
 import { TripDetailPanel } from '../components/TripDetailPanel';
@@ -20,9 +21,9 @@ import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geomet
 import { ArcGisConfig, BusStop, FleetOverview, Route, TripTrackingState } from '../types';
 
 /** Poll cadence while the realtime socket is down. */
-const POLL_MS = 5000;
-/** Slow reconciliation sweep while the socket is live. */
-const RECONCILE_MS = 30000;
+const POLL_MS = 4000;
+/** Slow reconciliation sweep while the socket is live (safety net only). */
+const RECONCILE_MS = 15000;
 /** Fleet overview refresh (server caches it for 15s). */
 const OVERVIEW_MS = 30000;
 
@@ -152,10 +153,11 @@ export function DashboardPage() {
   const alertIdRef = useRef(0);
   const routesRef = useRef<Route[]>([]);
   const trackingRef = useRef<TripTrackingState[]>([]);
+  const selectedTripIdRef = useRef<string | undefined>(undefined);
   const routeStopsRef = useRef<Map<string, BusStop[]>>(new Map());
   const visitedRef = useRef<Map<string, Set<string>>>(new Map());
 
-  const selectedTrip = tracking.find((t) => t.trip_id === selectedTripId) || null;
+  const selectedTrip = tracking.find((t) => sameTripId(t.trip_id, selectedTripId)) || null;
   const delayedCount = tracking.filter((t) => t.is_delayed).length;
   const [detailStops, setDetailStops] = useState<BusStop[]>();
 
@@ -240,7 +242,7 @@ export function DashboardPage() {
   // Drop selection if the trip no longer matches stop search / stat filter.
   useEffect(() => {
     if (!selectedTripId) return;
-    if (!mapTracking.some((t) => t.trip_id === selectedTripId)) {
+    if (!mapTracking.some((t) => sameTripId(t.trip_id, selectedTripId))) {
       setSelectedTripId(undefined);
     }
   }, [mapTracking, selectedTripId]);
@@ -250,6 +252,10 @@ export function DashboardPage() {
   useEffect(() => {
     trackingRef.current = tracking;
   }, [tracking]);
+
+  useEffect(() => {
+    selectedTripIdRef.current = selectedTripId;
+  }, [selectedTripId]);
 
   const stopsForRouteName = useCallback(async (routeName: string) => {
     const cached = routeStopsRef.current.get(routeName);
@@ -270,10 +276,11 @@ export function DashboardPage() {
     async (t: TripTrackingState) => {
       const stops = await stopsForRouteName(t.route_name);
       if (!stops) return t;
-      let visited = visitedRef.current.get(t.trip_id);
+      const key = normalizeTripId(t.trip_id) || t.trip_id;
+      let visited = visitedRef.current.get(key);
       if (!visited) {
         visited = new Set();
-        visitedRef.current.set(t.trip_id, visited);
+        visitedRef.current.set(key, visited);
       }
       updateVisitedStops(t, stops, visited);
       return correctTrackingForOrigin(t, stops, visited);
@@ -285,9 +292,13 @@ export function DashboardPage() {
     async (list: TripTrackingState[]) => {
       const corrected = await Promise.all(list.map(correctOne));
       // Drop visit history of trips that are no longer active.
-      const activeIds = new Set(list.map((t) => t.trip_id));
+      const activeIds = new Set(
+        list.map((t) => normalizeTripId(t.trip_id) || t.trip_id),
+      );
       for (const id of [...visitedRef.current.keys()]) {
-        if (!activeIds.has(id)) visitedRef.current.delete(id);
+        if (!activeIds.has(id) && !activeIds.has(normalizeTripId(id))) {
+          visitedRef.current.delete(id);
+        }
       }
       return corrected;
     },
@@ -369,24 +380,53 @@ export function DashboardPage() {
   useEffect(() => {
     const socket = getSocket();
 
+    const mergeTracking = (state: TripTrackingState) => {
+      // Apply backend snapshot immediately so ETA/position update on the same
+      // frame as the socket event — origin corrections run after without blocking.
+      setTracking((prev) => {
+        const i = prev.findIndex((t) => sameTripId(t.trip_id, state.trip_id));
+        if (i === -1) return [...prev, state];
+        const cur = prev[i];
+        const incomingTs = Date.parse(state.last_updated || '') || 0;
+        const currentTs = Date.parse(cur.last_updated || '') || 0;
+        if (incomingTs && currentTs && incomingTs < currentTs) return prev;
+        const next = prev.slice();
+        next[i] = state;
+        return next;
+      });
+      void correctOne(state).then((corrected) => {
+        setTracking((prev) => {
+          const i = prev.findIndex((t) => sameTripId(t.trip_id, corrected.trip_id));
+          if (i === -1) return prev;
+          const cur = prev[i];
+          const correctedTs = Date.parse(corrected.last_updated || '') || 0;
+          const currentTs = Date.parse(cur.last_updated || '') || 0;
+          // A newer GPS ping landed while we awaited route-stop corrections.
+          if (currentTs && correctedTs && currentTs > correctedTs) return prev;
+          const next = prev.slice();
+          next[i] = corrected;
+          return next;
+        });
+      });
+    };
+
     const subscribe = () => {
       setSocketLive(true);
-      socket.emit('subscribe:dispatch');
-      socket.emit('subscribe:alerts');
+      subscribeDispatchRooms(socket);
+      const selected = selectedTripIdRef.current;
+      if (selected) subscribeTripRoom(selected, socket);
+      // Re-sync REST snapshot after reconnect so we never miss a gap.
+      void refreshTracking();
     };
     const onDisconnect = () => setSocketLive(false);
     const onFleetAll = async (states: TripTrackingState[]) => {
       setTracking(await applyCorrections(states));
     };
-    const onFleetUpdate = async (state: TripTrackingState) => {
-      const corrected = await correctOne(state);
-      setTracking((prev) => {
-        const i = prev.findIndex((t) => t.trip_id === corrected.trip_id);
-        if (i === -1) return [...prev, corrected];
-        const next = prev.slice();
-        next[i] = corrected;
-        return next;
-      });
+    const onFleetUpdate = (state: TripTrackingState) => {
+      void mergeTracking(state);
+    };
+    const onTripUpdate = (state: TripTrackingState) => {
+      void mergeTracking(state);
     };
     const onAlert = (event: {
       channel?: string;
@@ -405,7 +445,9 @@ export function DashboardPage() {
         channel === 'notifications:delay'
       ) {
         // Resolve labels now — the trip may leave the live list moments later.
-        const live = trackingRef.current.find((t) => t.trip_id === payload.trip_id);
+        const live = trackingRef.current.find((t) =>
+          sameTripId(t.trip_id, payload.trip_id),
+        );
         const rawRoute =
           live?.route_name ?? routesRef.current.find((r) => r.id === payload.route_id)?.name;
         setAlerts((prev) => [
@@ -432,6 +474,7 @@ export function DashboardPage() {
     socket.on('disconnect', onDisconnect);
     socket.on('fleet:all', onFleetAll);
     socket.on('fleet:update', onFleetUpdate);
+    socket.on('trip:update', onTripUpdate);
     socket.on('alert', onAlert);
     if (socket.connected) subscribe();
 
@@ -440,9 +483,16 @@ export function DashboardPage() {
       socket.off('disconnect', onDisconnect);
       socket.off('fleet:all', onFleetAll);
       socket.off('fleet:update', onFleetUpdate);
+      socket.off('trip:update', onTripUpdate);
       socket.off('alert', onAlert);
     };
   }, [applyCorrections, correctOne, refreshTracking, refreshOverview]);
+
+  // Keep the selected trip room subscribed for a dedicated trip:update stream.
+  useEffect(() => {
+    if (!selectedTripId) return;
+    subscribeTripRoom(selectedTripId);
+  }, [selectedTripId]);
 
   // "/" focuses the fleet search from anywhere (except while typing).
   useEffect(() => {

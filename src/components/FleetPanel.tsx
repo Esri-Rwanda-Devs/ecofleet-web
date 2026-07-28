@@ -64,7 +64,7 @@ function nextStopMeta(t: TripTrackingState): {
   return {
     name,
     eta: seconds != null ? formatDuration(seconds) : '—',
-    delaySeconds: next?.delay_seconds ?? 0,
+    delaySeconds: t.next_stop_delay_seconds ?? next?.delay_seconds ?? t.delay_seconds ?? 0,
   };
 }
 

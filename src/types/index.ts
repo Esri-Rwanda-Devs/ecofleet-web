@@ -88,6 +88,8 @@ export interface TripTrackingState {
   current_stop_name?: string;
   next_stop_name?: string;
   next_stop_sequence?: number;
+  /** Uniform journey delay (seconds), measured at the next stop. */
+  next_stop_delay_seconds?: number;
   remaining_distance_meters: number;
   remaining_duration_seconds: number;
   /** Planned duration for the full trip to destination. */

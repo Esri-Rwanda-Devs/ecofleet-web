@@ -34,6 +34,37 @@
     var routeZoomSuppressedUntil = 0;
     var NAV_ZOOM = 18;
     var lastCamFollowAt = 0;
+
+    /** `{uuid}` and `uuid` must match for follow / marker updates. */
+    function normalizeTripId(id) {
+      if (id == null) return '';
+      return String(id).replace(/[{}]/g, '').trim().toLowerCase();
+    }
+    function sameTripId(a, b) {
+      var na = normalizeTripId(a);
+      var nb = normalizeTripId(b);
+      return na.length > 0 && na === nb;
+    }
+    function findVehicleEntry(tripId) {
+      if (!tripId) return null;
+      if (vehicleMarkers[tripId]) return vehicleMarkers[tripId];
+      var want = normalizeTripId(tripId);
+      var keys = Object.keys(vehicleMarkers);
+      for (var i = 0; i < keys.length; i++) {
+        if (normalizeTripId(keys[i]) === want) return vehicleMarkers[keys[i]];
+      }
+      return null;
+    }
+    function findVehicleKey(tripId) {
+      if (!tripId) return null;
+      if (vehicleMarkers[tripId]) return tripId;
+      var want = normalizeTripId(tripId);
+      var keys = Object.keys(vehicleMarkers);
+      for (var j = 0; j < keys.length; j++) {
+        if (normalizeTripId(keys[j]) === want) return keys[j];
+      }
+      return null;
+    }
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
@@ -272,9 +303,7 @@
         lastProgressKey = '';
 
         if (polyline && polyline.length >= 2) {
-          var followFe = followingTripId && vehicleMarkers[followingTripId]
-            ? vehicleMarkers[followingTripId]
-            : null;
+          var followFe = findVehicleEntry(followingTripId);
           if (followFe) {
             paintRouteProgress(followFe.lon, followFe.lat);
           } else {
@@ -361,7 +390,8 @@
     var routeStopsCache = [];
     var lastProgressKey = '';
 
-    /** Split [lng,lat][] at the nearest vertex to the bus → traversed + remaining. */
+    /** Split [lng,lat][] at the nearest vertex — NEVER inject the bus GPS into
+     *  the path (that drew a straight "link" line across buildings). */
     function splitRouteAtBus(path, lon, lat) {
       if (!path || path.length < 2) return null;
       var cosLat = Math.cos(lat * Math.PI / 180);
@@ -372,13 +402,14 @@
         var d = dx * dx + dy * dy;
         if (d < bestD) { bestD = d; best = i; }
       }
+      // ~80 m — if the bus is off the polyline, don't fabricate a connector.
+      var meters = Math.sqrt(bestD) * 111320;
+      if (meters > 80) return null;
+
       var traversed = path.slice(0, Math.max(1, best + 1));
       var remaining = path.slice(Math.max(0, best));
       if (remaining.length < 2) remaining = path.slice(Math.max(0, path.length - 2));
       if (traversed.length < 2) traversed = path.slice(0, 2);
-      // Ensure bus position is the join point.
-      traversed[traversed.length - 1] = [lon, lat];
-      remaining[0] = [lon, lat];
       return { traversed: traversed, remaining: remaining };
     }
 
@@ -391,24 +422,18 @@
       require([
         'esri/Graphic', 'esri/geometry/Polyline', 'esri/symbols/SimpleLineSymbol'
       ], function(Graphic, Polyline, SimpleLineSymbol) {
-        // Keep stop markers; only rebuild route line graphics.
-        var keepStops = [];
-        routeLayer.graphics.forEach(function(g) {
-          // route lines have no attributes.kind; stops live on stopLayer
-        });
-        // Clear only polyline graphics by removing all from routeLayer (stops are on stopLayer).
         routeLayer.removeAll();
 
+        // Progress split only when the bus sits on the road geometry. Otherwise
+        // paint the full route — never a straight bus→route shortcut.
         var split = (lon != null && lat != null) ? splitRouteAtBus(routePath, lon, lat) : null;
         if (split) {
-          // Traversed (behind the bus) — muted
           routeLayer.add(new Graphic({
             geometry: new Polyline({ paths: [split.traversed] }),
             symbol: new SimpleLineSymbol({
               color: [148, 163, 184, 0.85], width: 4, cap: 'round', join: 'round'
             })
           }));
-          // Remaining (ahead) — bright green with white halo
           routeLayer.add(new Graphic({
             geometry: new Polyline({ paths: [split.remaining] }),
             symbol: new SimpleLineSymbol({
@@ -437,11 +462,11 @@
 
     function refreshRouteProgressFromFollow() {
       var id = followingTripId;
-      if (!id || !vehicleMarkers[id]) {
+      var fe = findVehicleEntry(id);
+      if (!id || !fe) {
         if (routePath) paintRouteProgress(null, null);
         return;
       }
-      var fe = vehicleMarkers[id];
       paintRouteProgress(fe.lon, fe.lat);
     }
 
@@ -563,7 +588,7 @@
         }
         e.label.geometry = geom;
         e.lon = lon; e.lat = lat; e.hdg = hdg;
-        if (followingTripId === id) {
+        if (sameTripId(followingTripId, id)) {
           syncNavCamera(lon, lat, hdg, false);
           if (now - (e._lastProgressAt || 0) > 900) {
             e._lastProgressAt = now;
@@ -576,9 +601,9 @@
         requestAnimationFrame(vehicleAnimTick);
       } else {
         vehicleAnimRunning = false;
-        if (followingTripId && vehicleMarkers[followingTripId]) {
-          var fe = vehicleMarkers[followingTripId];
-          syncNavCamera(fe.lon, fe.lat, fe.hdg, false);
+        var followFe = findVehicleEntry(followingTripId);
+        if (followingTripId && followFe) {
+          syncNavCamera(followFe.lon, followFe.lat, followFe.hdg, false);
         }
       }
     }
@@ -589,9 +614,10 @@
         var seen = {};
         (tracking || []).forEach(function(t) {
           if (t.longitude == null || t.latitude == null) return;
-          seen[t.trip_id] = true;
+          var tripKey = findVehicleKey(t.trip_id) || t.trip_id;
+          seen[tripKey] = true;
           var connected = !!t.gps_connected;
-          var e = vehicleMarkers[t.trip_id];
+          var e = vehicleMarkers[tripKey];
           if (!e) {
             var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
             var initHdg = routeSnappedHeading(t.longitude, t.latitude, t.heading || null);
@@ -607,13 +633,13 @@
               attributes: { tripId: t.trip_id }
             });
             vehicleLayer.addMany([marker, label]);
-            vehicleMarkers[t.trip_id] = {
+            vehicleMarkers[tripKey] = {
               marker: marker, label: label,
               lon: t.longitude, lat: t.latitude, hdg: initHdg,
               travelHdg: t.heading || null,
               connected: connected, anim: null
             };
-            if (pendingFocusTripId === t.trip_id || followingTripId === t.trip_id) {
+            if (sameTripId(pendingFocusTripId, t.trip_id) || sameTripId(followingTripId, t.trip_id)) {
               tryFocusVehicle();
             }
             return;
@@ -622,6 +648,9 @@
             e.label.symbol = vehicleLabelSymbol(t.vehicle_plate, connected);
           }
           e.connected = connected;
+          // Keep attribute in sync with latest id form from the server.
+          e.marker.attributes.tripId = t.trip_id;
+          e.label.attributes.tripId = t.trip_id;
 
           var movedMeters = Math.hypot(
             (t.latitude - e.lat) * 111320,
@@ -648,7 +677,7 @@
             e.label.geometry = snapGeom;
             e.lon = t.longitude; e.lat = t.latitude; e.hdg = newHdg;
             e.anim = null;
-            if (followingTripId === t.trip_id) syncNavCamera(e.lon, e.lat, e.hdg, true);
+            if (sameTripId(followingTripId, t.trip_id)) syncNavCamera(e.lon, e.lat, e.hdg, true);
           } else {
             e.anim = {
               start: Date.now(),
@@ -666,7 +695,7 @@
             var gone = vehicleMarkers[id];
             vehicleLayer.removeMany([gone.marker, gone.label]);
             delete vehicleMarkers[id];
-            if (followingTripId === id) followingTripId = null;
+            if (sameTripId(followingTripId, id)) followingTripId = null;
           }
         });
       });
@@ -681,7 +710,7 @@
       followingTripId = tripId;
       pendingFocusTripId = tripId;
       routeZoomSuppressedUntil = Date.now() + 5000;
-      var fe = vehicleMarkers[tripId];
+      var fe = findVehicleEntry(tripId);
       if (fe) {
         pendingFocusTripId = null;
         lastCamFollowAt = 0;
@@ -694,7 +723,7 @@
     function tryFocusVehicle() {
       var id = pendingFocusTripId || followingTripId;
       if (!id || !view) return false;
-      var fe = vehicleMarkers[id];
+      var fe = findVehicleEntry(id);
       if (!fe) return false;
       followingTripId = id;
       pendingFocusTripId = null;

@@ -9,16 +9,7 @@ const SOCKET_URL = (
 
 let socket: Socket | null = null;
 
-/**
- * Shared Socket.IO connection to the backend realtime gateway (same host as
- * the REST API). Created lazily, reconnects automatically; the API is open so
- * no auth handshake is needed. Rooms are joined by emitting subscribe:dispatch
- * / subscribe:alerts / subscribe:trip / subscribe:station.
- *
- * Polling is tried first: some hosts abort a bare WebSocket handshake, which
- * surfaces as "WebSocket is closed before the connection is established".
- * Socket.IO then upgrades to websocket when ready.
- */
+
 export function getSocket(): Socket {
   if (!socket) {
     socket = io(SOCKET_URL, {
@@ -28,11 +19,29 @@ export function getSocket(): Socket {
       path: '/socket.io',
       reconnection: true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 8000,
-      timeout: 20000,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 5000,
+      randomizationFactor: 0.3,
+      timeout: 15000,
       withCredentials: false,
+      forceNew: false,
+      autoConnect: true,
     });
   }
   return socket;
+}
+
+/** Join dispatch + alerts rooms (safe to call on every connect/reconnect). */
+export function subscribeDispatchRooms(sock: Socket = getSocket()): void {
+  sock.emit('subscribe:dispatch');
+  sock.emit('subscribe:alerts');
+}
+
+/** Join a trip room (bare + braced forms are handled server-side). */
+export function subscribeTripRoom(
+  tripId: string,
+  sock: Socket = getSocket(),
+): void {
+  if (!tripId) return;
+  sock.emit('subscribe:trip', { tripId });
 }

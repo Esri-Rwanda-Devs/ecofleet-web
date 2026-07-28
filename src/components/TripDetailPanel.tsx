@@ -86,13 +86,42 @@ function formatClockIso(iso: string | null | undefined): string {
   return formatArrivalMs(d.getTime());
 }
 
-/** Delay from backend schedule + live arrival (ticks between GPS polls). */
-function stopDelaySeconds(s: StopEta, arrivalMs: number): number {
-  if (s.scheduled_arrival_at) {
-    const sched = new Date(s.scheduled_arrival_at).getTime();
-    if (!Number.isNaN(sched)) return Math.round((arrivalMs - sched) / 1000);
+/**
+ * One journey delay from the next (first upcoming) stop — same value for every
+ * upcoming stop. Overdue: Now − Scheduled; else (Now + travel) − Scheduled.
+ */
+function liveJourneyDelaySeconds(
+  next: StopEta | null,
+  trip: TripTrackingState,
+  nowMs: number,
+): number {
+  const fallback =
+    trip.next_stop_delay_seconds ?? trip.delay_seconds ?? next?.delay_seconds ?? 0;
+  if (!next?.scheduled_arrival_at) return fallback;
+
+  const sched = new Date(next.scheduled_arrival_at).getTime();
+  if (Number.isNaN(sched)) return fallback;
+
+  const updated = trip.last_updated ? new Date(trip.last_updated).getTime() : NaN;
+  const remRaw = Math.max(0, next.remaining_duration_seconds ?? 0);
+  const ageSec = !Number.isNaN(updated) ? Math.max(0, (nowMs - updated) / 1000) : 0;
+  const rem = Math.max(0, remRaw - ageSec);
+
+  if (nowMs >= sched || rem <= 15) {
+    return Math.round((nowMs - sched) / 1000);
   }
-  return s.delay_seconds ?? 0;
+  return Math.round((nowMs + rem * 1000 - sched) / 1000);
+}
+
+/** Arrival clock = Scheduled + uniform journey delay (13:40 + 1 min → 13:41). */
+function arrivalFromSchedule(
+  scheduledIso: string | null | undefined,
+  journeyDelaySec: number,
+): number | null {
+  if (!scheduledIso) return null;
+  const sched = new Date(scheduledIso).getTime();
+  if (Number.isNaN(sched)) return null;
+  return sched + journeyDelaySec * 1000;
 }
 
 function clockIn(seconds: number): string {
@@ -265,11 +294,8 @@ export function TripDetailPanel({
 
   void nowTick; // re-render clocks each second
 
-  const nextLiveMs = nextStop
-    ? liveArrivalMs(nextStop, nowTick, trip.last_updated)
-    : null;
-  const nextDelaySec =
-    nextStop && nextLiveMs != null ? stopDelaySeconds(nextStop, nextLiveMs) : 0;
+  // One delay for the whole journey (from next stop) — applied to every upcoming stop.
+  const journeyDelaySec = liveJourneyDelaySeconds(nextStop, trip, nowTick);
 
   const destLive = liveDestMetrics(trip, upcomingStops, nextStop);
   const destStop = upcomingStops.length
@@ -279,7 +305,7 @@ export function TripDetailPanel({
     destStop?.remaining_duration_seconds ??
     trip.remaining_duration_seconds ??
     destLive.etaSeconds;
-  const destDelaySec = destStop?.delay_seconds ?? nextDelaySec;
+  const destDelaySec = journeyDelaySec;
   const delayView = delayViewFromSeconds(destDelaySec);
   const delayTone =
     delayView?.tone === "late" || delayView?.tone === "critical"
@@ -518,9 +544,15 @@ export function TripDetailPanel({
                         (legMeters / 1000 / s.segment_speed_kmh) * 3600,
                       )
                     : null);
-              // Scheduled + delay from backend; arrival ticks live between GPS polls.
-              const arrivalMs = liveArrivalMs(s, nowTick, trip.last_updated);
-              const delaySec = stopDelaySeconds(s, arrivalMs);
+              // Uniform journey delay: Arrival = Scheduled + delay (same +N on every stop).
+              const arrivalFromSched = arrivalFromSchedule(
+                s.scheduled_arrival_at,
+                journeyDelaySec,
+              );
+              const arrivalMs =
+                arrivalFromSched ??
+                liveArrivalMs(s, nowTick, trip.last_updated);
+              const delaySec = journeyDelaySec;
               const delay = formatStopDelay(delaySec);
 
               const nodeTone = isNext
@@ -619,7 +651,11 @@ export function TripDetailPanel({
                         <p
                           className={`num mt-0.5 text-[0.875rem] font-semibold ${delay.tone}`}
                         >
-                          {delay.label}
+                          {delaySec < 0
+                            ? `${delay.label} early`
+                            : delaySec > 0
+                              ? `${delay.label} late`
+                              : delay.label}
                         </p>
                       </div>
                     </div>
