@@ -108,6 +108,23 @@ export function delayViewFromSeconds(seconds: number): DelayView {
     : { tone: 'early', label: `−${formatDelayMinutes(seconds)} early` };
 }
 
+/** Compact delay label for fleet / stop rows: +1, +2, ±0 */
+export function compactDelayLabel(seconds: number | undefined | null): string {
+  if (seconds == null) return '±0';
+  const mins = Math.round(seconds / 60);
+  if (mins === 0) return '±0';
+  return mins > 0 ? `+${mins}` : `${mins}`;
+}
+
+export function compactDelayView(seconds: number | undefined | null): DelayView {
+  const label = compactDelayLabel(seconds);
+  if (label === '±0') return { tone: 'ontime', label };
+  const mins = Math.round(Math.abs(seconds ?? 0) / 60);
+  return (seconds ?? 0) > 0
+    ? { tone: mins >= 12 ? 'critical' : 'late', label }
+    : { tone: 'early', label };
+}
+
 export function DelayChip({ view }: { view: DelayView }) {
   return (
     <span

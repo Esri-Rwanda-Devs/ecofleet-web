@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BusStop, StopEta, TripTrackingState } from "../types";
 import { BusIcon, CheckIcon, ChevronDownIcon, CloseIcon } from "./Icons";
-import { FreshnessChip, delayViewFromSeconds } from "./StatusChips";
+import { FreshnessChip, compactDelayView, delayViewFromSeconds } from "./StatusChips";
 import { formatRouteName, formatStopName } from "../utils/display-names";
 import { dedupeStopEtas } from "../utils/tracking-corrections";
 
@@ -77,6 +77,22 @@ function formatArrivalMs(ms: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatClockIso(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return formatArrivalMs(d.getTime());
+}
+
+/** Delay from backend schedule + live arrival (ticks between GPS polls). */
+function stopDelaySeconds(s: StopEta, arrivalMs: number): number {
+  if (s.scheduled_arrival_at) {
+    const sched = new Date(s.scheduled_arrival_at).getTime();
+    if (!Number.isNaN(sched)) return Math.round((arrivalMs - sched) / 1000);
+  }
+  return s.delay_seconds ?? 0;
 }
 
 function clockIn(seconds: number): string {
@@ -166,55 +182,19 @@ export function TripDetailPanel({
   onClose,
 }: TripDetailPanelProps) {
   const [showPassed, setShowPassed] = useState(false);
-  /** Wall-clock tick so Dest. ETA / Arrival clocks stay live every second. */
+  /** Wall-clock tick so Arrival / Delay stay live between GPS polls. */
   const [nowTick, setNowTick] = useState(() => Date.now());
-  /**
-   * Expected arrival (ms) per stop — frozen on first sight, or from schedule.
-   * Delay = live Arrival − this expected time → +1, +2 as Arrival slips.
-   */
-  const expectedArrivalRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
-  // New trip → reset expected baselines so delay starts at ±0.
-  useEffect(() => {
-    expectedArrivalRef.current = new Map();
-  }, [trip.trip_id]);
-
   const coordsById = useMemo(() => {
     const map = new Map<string, BusStop>();
     routeStops?.forEach((s) => map.set(s.id, s));
     return map;
   }, [routeStops]);
-
-  /** Live arrival vs expected → delay seconds (+ late / − early) and frozen expected ms. */
-  const delayVsExpected = (
-    s: StopEta,
-    liveMs: number,
-  ): { delaySec: number; expectedMs: number } => {
-    const sched = s.scheduled_arrival_at
-      ? new Date(s.scheduled_arrival_at).getTime()
-      : NaN;
-    if (!Number.isNaN(sched)) {
-      expectedArrivalRef.current.set(s.stop_id, sched);
-      return {
-        delaySec: Math.round((liveMs - sched) / 1000),
-        expectedMs: sched,
-      };
-    }
-    // Freeze first live Arrival as expected (e.g. 18:22). Later 18:23 → +1.
-    if (!expectedArrivalRef.current.has(s.stop_id)) {
-      expectedArrivalRef.current.set(s.stop_id, liveMs);
-    }
-    const expected = expectedArrivalRef.current.get(s.stop_id)!;
-    return {
-      delaySec: Math.round((liveMs - expected) / 1000),
-      expectedMs: expected,
-    };
-  };
 
   const focusStop = (id: string, name: string) => {
     if (!onStopNumberClick) return;
@@ -289,30 +269,18 @@ export function TripDetailPanel({
     ? liveArrivalMs(nextStop, nowTick, trip.last_updated)
     : null;
   const nextDelaySec =
-    nextStop && nextLiveMs != null
-      ? delayVsExpected(nextStop, nextLiveMs).delaySec
-      : 0;
+    nextStop && nextLiveMs != null ? stopDelaySeconds(nextStop, nextLiveMs) : 0;
 
   const destLive = liveDestMetrics(trip, upcomingStops, nextStop);
   const destStop = upcomingStops.length
     ? upcomingStops[upcomingStops.length - 1]
     : null;
-  const destDelaySec = destStop
-    ? delayVsExpected(
-        destStop,
-        liveArrivalMs(destStop, nowTick, trip.last_updated),
-      ).delaySec
-    : destLive.delaySeconds;
-  const journeyDelaySec =
-    Math.abs(destDelaySec) >= Math.abs(nextDelaySec)
-      ? destDelaySec
-      : nextDelaySec;
-  // Live Dest. ETA = travel remaining + current lateness (grows as delay grows).
-  const destEtaSeconds = destLive.etaSeconds + Math.max(0, journeyDelaySec);
-  const delayView =
-    Math.abs(journeyDelaySec) >= 60
-      ? delayViewFromSeconds(journeyDelaySec)
-      : null;
+  const destEtaSeconds =
+    destStop?.remaining_duration_seconds ??
+    trip.remaining_duration_seconds ??
+    destLive.etaSeconds;
+  const destDelaySec = destStop?.delay_seconds ?? nextDelaySec;
+  const delayView = delayViewFromSeconds(destDelaySec);
   const delayTone =
     delayView?.tone === "late" || delayView?.tone === "critical"
       ? "text-danger"
@@ -377,11 +345,11 @@ export function TripDetailPanel({
             {clockIn(destEtaSeconds)} ·{" "}
             {formatDistance(destLive.distanceMeters)}
           </span>
-          {delayView && delayView.tone !== "ontime" && (
+          {delayView.tone !== "ontime" && (
             <span
               className={`num mt-1 block text-[0.75rem] font-bold ${delayTone}`}
             >
-              {delayView.label}
+              {compactDelayView(destDelaySec).label}
             </span>
           )}
         </div>
@@ -521,9 +489,9 @@ export function TripDetailPanel({
                         (legMeters / 1000 / s.segment_speed_kmh) * 3600,
                       )
                     : null);
-              // Arrival = live estimate. Scheduled = initial/expected before delay.
+              // Scheduled + delay from backend; arrival ticks live between GPS polls.
               const arrivalMs = liveArrivalMs(s, nowTick, trip.last_updated);
-              const { delaySec, expectedMs } = delayVsExpected(s, arrivalMs);
+              const delaySec = stopDelaySeconds(s, arrivalMs);
               const delay = formatStopDelay(delaySec);
 
               const nodeTone = isNext
@@ -604,7 +572,7 @@ export function TripDetailPanel({
                           Scheduled
                         </p>
                         <p className="num mt-0.5 text-[0.875rem] font-semibold text-ink">
-                          {formatArrivalMs(expectedMs)}
+                          {formatClockIso(s.scheduled_arrival_at)}
                         </p>
                       </div>
                       <div className="min-w-0">

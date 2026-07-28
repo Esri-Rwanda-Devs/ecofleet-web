@@ -96,6 +96,8 @@ export interface TripTrackingState {
   segment_totals?: SegmentTotals;
   eta: string;
   estimated_arrival_at?: string;
+  /** Scheduled destination arrival from the Start-frozen plan (backend). */
+  scheduled_arrival_at?: string | null;
   completion_percentage: number;
   delay_seconds: number;
   is_delayed: boolean;

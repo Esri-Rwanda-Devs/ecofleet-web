@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { TripTrackingState } from '../types';
 import { BusIcon, ClockIcon, MapPinIcon, SpeedIcon } from './Icons';
 import {
+  compactDelayView,
   DelayChip,
   FreshnessChip,
   StatusBadge,
-  tripDelayView,
   tripStatusKind,
 } from './StatusChips';
 import { formatRouteName, formatStopName, isPlaceholderDriver } from '../utils/display-names';
@@ -33,7 +33,11 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-function nextStopMeta(t: TripTrackingState): { name: string; eta: string } | null {
+function nextStopMeta(t: TripTrackingState): {
+  name: string;
+  eta: string;
+  delaySeconds: number;
+} | null {
   // Full-journey stop_etas includes passed stops first — skip those.
   const upcoming = (t.stop_etas ?? []).filter((s) => s.status !== 'passed');
   let next =
@@ -60,7 +64,17 @@ function nextStopMeta(t: TripTrackingState): { name: string; eta: string } | nul
   return {
     name,
     eta: seconds != null ? formatDuration(seconds) : '—',
+    delaySeconds: next?.delay_seconds ?? 0,
   };
+}
+
+function destEtaMeta(t: TripTrackingState): string | null {
+  const upcoming = (t.stop_etas ?? []).filter((s) => s.status !== 'passed');
+  const dest = upcoming.length ? upcoming[upcoming.length - 1] : null;
+  const seconds =
+    dest?.remaining_duration_seconds ?? t.remaining_duration_seconds ?? null;
+  if (seconds == null) return null;
+  return formatDuration(seconds);
 }
 
 function fleetLiveMetrics(t: TripTrackingState): {
@@ -173,8 +187,9 @@ export function FleetPanel({
           {list.map((t) => {
             const route = formatRouteName(t.route_name);
             const next = nextStopMeta(t);
+            const destEta = destEtaMeta(t);
             const live = fleetLiveMetrics(t);
-            const delay = tripDelayView(t);
+            const nextDelay = compactDelayView(next?.delaySeconds ?? 0);
             const selected = selectedTripId === t.trip_id;
             return (
               <button
@@ -271,6 +286,12 @@ export function FleetPanel({
                         <ClockIcon size={13} className="mt-0.5 shrink-0 text-primary" />
                         <span className="min-w-0 break-words">{next.name}</span>
                       </p>
+                      {destEta && (
+                        <p className="num mt-1 text-[0.75rem] font-semibold text-muted">
+                          Dest.{' '}
+                          <span className="text-ink-soft">{destEta}</span>
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="break-words text-[0.9375rem] font-medium text-muted">
@@ -288,7 +309,7 @@ export function FleetPanel({
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pl-1">
                   <StatusBadge kind={tripStatusKind(t)} />
-                  <DelayChip view={delay} />
+                  <DelayChip view={nextDelay} />
                 </div>
 
                 {!isPlaceholderDriver(t.driver_name) && (
