@@ -28,6 +28,7 @@
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
     var busStopsFeatureLayer = null, busRoutesFeatureLayer = null;
+    var busLineVisualLayer = null;
     var highlightGraphic = null, highlightStopId = null;
     var followingTripId = null;
     var pendingFocusTripId = null;
@@ -75,6 +76,13 @@
     // Strip accidental /query?... suffixes — FeatureLayer needs the layer root URL.
     routesLayerUrl = String(routesLayerUrl).split('/query')[0].replace(/\/$/, '');
     var routesDefinition = params.get('routesWhere') || 'active = 1';
+    // Cartographic bus-line layer. Passing an empty visualLayer disables it.
+    var visualLayerUrl = params.get('visualLayer');
+    if (visualLayerUrl === null) {
+      visualLayerUrl =
+        'https://esrirw.rw/server/rest/services/Hosted/Bus_Line_Kigali_for_Map_visual/FeatureServer/0';
+    }
+    visualLayerUrl = String(visualLayerUrl).split('/query')[0].replace(/\/$/, '');
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -123,9 +131,12 @@
               expires: expires,
               ssl: true
             });
-            // Belt-and-suspenders: always attach the portal token to Bus_Lanes_BTS requests.
+            // Belt-and-suspenders: attach the portal token to every service on
+            // this ArcGIS Server, not just Bus_Lanes_BTS — the cartographic
+            // bus-line layer lives under Hosted/ and needs the same token.
+            // Only fills the token in when absent, so it cannot override one.
             esriConfig.request.interceptors.push({
-              urls: /esrirw\.rw\/server\/rest\/services\/Bus_Lanes_BTS/i,
+              urls: /esrirw\.rw\/server\/rest\/services/i,
               before: function(params) {
                 params.requestOptions = params.requestOptions || {};
                 params.requestOptions.query = params.requestOptions.query || {};
@@ -135,6 +146,40 @@
               }
             });
           } catch (e) {}
+        }
+
+        // Cartographic bus-line layer (Bus_Line_Kigali_export). No renderer is
+        // set on purpose: the service publishes its own drawingInfo, and
+        // honouring it is the whole point of a "for map visual" layer. Sits at
+        // the bottom of the stack as background context, so the operational
+        // layers and the selected trip always draw over it.
+        if (visualLayerUrl) {
+          busLineVisualLayer = new FeatureLayer({
+            url: visualLayerUrl,
+            title: 'Bus lines (map visual)',
+            outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+            popupEnabled: true,
+            popupTemplate: {
+              title: '{route_name}',
+              content: [
+                {
+                  type: 'fields',
+                  fieldInfos: [
+                    { fieldName: 'route_id', label: 'Route ID' },
+                    { fieldName: 'corridor', label: 'Corridor' },
+                    { fieldName: 'direction', label: 'Direction' },
+                    { fieldName: 'length_km', label: 'Length (km)' }
+                  ]
+                }
+              ]
+            }
+          });
+          // A visual layer must never break the operations map: if it fails to
+          // load (token, service down, renamed), drop it and carry on.
+          busLineVisualLayer.load().catch(function (e) {
+            if (window.console) console.warn('Bus line visual layer unavailable:', e && e.message);
+            if (busLineVisualLayer) busLineVisualLayer.visible = false;
+          });
         }
 
         // Network-wide background layers from Bus_Lanes_BTS FeatureServer.
@@ -219,13 +264,17 @@
         vehicleLayer = new GraphicsLayer({ title: 'Vehicles', listMode: 'hide' });
 
         var map = new Map({ basemap: 'satellite' });
-        map.addMany([
-          busRoutesFeatureLayer,
-          busStopsFeatureLayer,
-          routeLayer,
-          stopLayer,
-          vehicleLayer
-        ]);
+        // Bottom to top: cartographic lines, operational lanes/stops, then the
+        // selected trip and vehicles.
+        map.addMany(
+          (busLineVisualLayer ? [busLineVisualLayer] : []).concat([
+            busRoutesFeatureLayer,
+            busStopsFeatureLayer,
+            routeLayer,
+            stopLayer,
+            vehicleLayer
+          ])
+        );
         window.__basemapName = 'satellite';
 
         view = new MapView({

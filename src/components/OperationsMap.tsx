@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { BUS_ROUTES_DEFINITION_EXPRESSION, BUS_ROUTES_LAYER_URL, BUS_STOPS_LAYER_URL } from '../arcgis/constants';
+import {
+  BUS_LINE_VISUAL_LAYER_URL,
+  BUS_ROUTES_DEFINITION_EXPRESSION,
+  BUS_ROUTES_LAYER_URL,
+  BUS_STOPS_LAYER_URL,
+} from '../arcgis/constants';
 import type { ArcGisConfig, BusStop, TripTrackingState } from '../types';
 
 const ENV_ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || '';
@@ -26,6 +31,14 @@ function buildMapUrl(config: ArcGisConfig): string {
   params.set(
     'routesWhere',
     config.buslane?.routesWhere || BUS_ROUTES_DEFINITION_EXPRESSION,
+  );
+  // Cartographic bus-line layer, background context beneath everything else.
+  // Backend config can override it without a web redeploy.
+  params.set(
+    'visualLayer',
+    (config.buslane?.visualLayerUrl || BUS_LINE_VISUAL_LAYER_URL)
+      .split('/query')[0]
+      .replace(/\/$/, ''),
   );
   const qs = params.toString();
   return qs ? `/operations-map.html?${qs}` : '/operations-map.html';

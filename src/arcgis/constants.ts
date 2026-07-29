@@ -14,6 +14,15 @@ export const BUS_ROUTES_LAYER_URL =
 /** Only draw routes marked active in the geodatabase. */
 export const BUS_ROUTES_DEFINITION_EXPRESSION = 'active = 1';
 
+/**
+ * Cartographic bus-line layer (Bus_Line_Kigali_export), published for map
+ * display. Drawn beneath the operational layers as background context and
+ * rendered with the symbology published on the service rather than one defined
+ * here — respecting that cartography is the point of a "for map visual" layer.
+ */
+export const BUS_LINE_VISUAL_LAYER_URL =
+  'https://esrirw.rw/server/rest/services/Hosted/Bus_Line_Kigali_for_Map_visual/FeatureServer/0';
+
 /** Satellite imagery with labels — visible over Rwanda */
 export const SATELLITE_BASEMAP_ID = 'hybrid';
 

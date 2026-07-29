@@ -137,6 +137,8 @@ export interface BuslaneConfig {
   routesLayerUrl?: string;
   /** SQL filter for routes FeatureLayer (default: active = 1). */
   routesWhere?: string;
+  /** Cartographic bus-line layer drawn as background context. */
+  visualLayerUrl?: string;
   /** Legacy field names kept optional for older clients. */
   busStopsUrl?: string;
   busRoutesUrl?: string;
