@@ -148,16 +148,26 @@
           } catch (e) {}
         }
 
-        // Cartographic bus-line layer (Bus_Line_Kigali_export). No renderer is
-        // set on purpose: the service publishes its own drawingInfo, and
-        // honouring it is the whole point of a "for map visual" layer. Sits at
-        // the bottom of the stack as background context, so the operational
-        // layers and the selected trip always draw over it.
+        // Cartographic bus-line layer (Bus_Line_Kigali_export) — the blue base
+        // road network. The service publishes a grey drawingInfo; we override it
+        // so every bus road reads blue, and green is left to mean one thing only:
+        // a live trip is running on it (painted by routeLayer above). Same width
+        // as the service symbol, so only the hue changes. Sits at the bottom of
+        // the stack, so operational layers and the selected trip draw over it.
         if (visualLayerUrl) {
           busLineVisualLayer = new FeatureLayer({
             url: visualLayerUrl,
             title: 'Bus lines (map visual)',
             outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+            renderer: {
+              type: 'simple',
+              symbol: {
+                type: 'simple-line',
+                color: [56, 189, 248, 0.9],
+                width: 4,
+                style: 'solid'
+              }
+            },
             popupEnabled: true,
             popupTemplate: {
               title: '{route_name}',
