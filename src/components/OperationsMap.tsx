@@ -9,16 +9,29 @@ import type { ArcGisConfig, BusStop, TripTrackingState } from '../types';
 
 const ENV_ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || '';
 
+/**
+ * Bus_Lanes_BTS now lives under /Hosted/ on the portal, but the backend still
+ * advertises the old root-level path, which 404s. Repair it here so the layer
+ * draws; backend config still wins for every other service it points at.
+ */
+function repairBuslaneUrl(url: string): string {
+  return url.replace(
+    '/rest/services/Bus_Lanes_BTS/',
+    '/rest/services/Hosted/Bus_Lanes_BTS/',
+  );
+}
+
 function buildMapUrl(config: ArcGisConfig): string {
   const params = new URLSearchParams();
   const token = config.arcgisToken || ENV_ARCGIS_TOKEN;
   if (token) params.set('token', token);
   if (config.portalUrl) params.set('portal', config.portalUrl);
   // Network-wide FeatureLayers on the map only (selected trip still uses backend APIs).
-  const stopsUrl =
+  const stopsUrl = repairBuslaneUrl(
     config.buslane?.stopsLayerUrl ||
-    config.buslane?.busStopsUrl ||
-    BUS_STOPS_LAYER_URL;
+      config.buslane?.busStopsUrl ||
+      BUS_STOPS_LAYER_URL,
+  );
   const routesUrl = (
     config.buslane?.routesLayerUrl ||
     config.buslane?.busRoutesUrl ||

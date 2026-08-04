@@ -8,7 +8,13 @@ export const ARCGIS_WEBMAP_ID = '9afd9a6957304bbb8875e9ffe89e30d4';
  * Layer 1 = Bus_Line_Kigali  (polylines) — filter with definitionExpression active = 1
  */
 export const BUS_STOPS_LAYER_URL =
-  'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
+  'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/0';
+/**
+ * Still on the pre-move root path: repairing it would make the layer load and
+ * then draw nothing, because BUS_ROUTES_DEFINITION_EXPRESSION filters on a
+ * field this service doesn't have (it has `active_status`, which is null on
+ * all 51 rows). Fix the filter server-side first, then move this to /Hosted/.
+ */
 export const BUS_ROUTES_LAYER_URL =
   'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
 /** Only draw routes marked active in the geodatabase. */

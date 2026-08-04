@@ -70,7 +70,8 @@
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
     var stopsLayerUrl = params.get('stopsLayer') ||
-      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
+      'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/0';
+    stopsLayerUrl = String(stopsLayerUrl).split('/query')[0].replace(/\/$/, '');
     var routesLayerUrl = params.get('routesLayer') ||
       'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
     // Strip accidental /query?... suffixes — FeatureLayer needs the layer root URL.
@@ -232,7 +233,9 @@
           title: 'Bus stops',
           outFields: ['stop_id', 'name', 'speed_kmh'],
           popupEnabled: false,
-          visible: false,
+          // Network-wide stops are the default view; drawRoute hides them once
+          // a trip is selected so only that route's numbered stops show.
+          visible: true,
           popupTemplate: {
             title: '{name}',
             content: [
@@ -354,9 +357,11 @@
 
         var polyline = data.polyline;
         var stops = data.stops || [];
-        // Route workflow: only numbered stops on the selected trip route — hide network-wide layers.
-        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = false;
-        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = stops.length === 0 && !(polyline && polyline.length >= 2);
+        // Route workflow: only numbered stops on the selected trip route — hide
+        // network-wide layers. Clearing the selection brings them back.
+        var networkVisible = stops.length === 0 && !(polyline && polyline.length >= 2);
+        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = networkVisible;
+        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = networkVisible;
         routePath = polyline && polyline.length >= 2 ? polyline : null;
         routeStopsCache = stops;
         lastProgressKey = '';

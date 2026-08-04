@@ -28,22 +28,62 @@
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
     var busStopsFeatureLayer = null, busRoutesFeatureLayer = null;
+    var busLineVisualLayer = null;
     var highlightGraphic = null, highlightStopId = null;
     var followingTripId = null;
     var pendingFocusTripId = null;
     var routeZoomSuppressedUntil = 0;
     var NAV_ZOOM = 18;
     var lastCamFollowAt = 0;
+
+    /** `{uuid}` and `uuid` must match for follow / marker updates. */
+    function normalizeTripId(id) {
+      if (id == null) return '';
+      return String(id).replace(/[{}]/g, '').trim().toLowerCase();
+    }
+    function sameTripId(a, b) {
+      var na = normalizeTripId(a);
+      var nb = normalizeTripId(b);
+      return na.length > 0 && na === nb;
+    }
+    function findVehicleEntry(tripId) {
+      if (!tripId) return null;
+      if (vehicleMarkers[tripId]) return vehicleMarkers[tripId];
+      var want = normalizeTripId(tripId);
+      var keys = Object.keys(vehicleMarkers);
+      for (var i = 0; i < keys.length; i++) {
+        if (normalizeTripId(keys[i]) === want) return vehicleMarkers[keys[i]];
+      }
+      return null;
+    }
+    function findVehicleKey(tripId) {
+      if (!tripId) return null;
+      if (vehicleMarkers[tripId]) return tripId;
+      var want = normalizeTripId(tripId);
+      var keys = Object.keys(vehicleMarkers);
+      for (var j = 0; j < keys.length; j++) {
+        if (normalizeTripId(keys[j]) === want) return keys[j];
+      }
+      return null;
+    }
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
     var stopsLayerUrl = params.get('stopsLayer') ||
-      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/0';
+      'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/0';
+    stopsLayerUrl = String(stopsLayerUrl).split('/query')[0].replace(/\/$/, '');
     var routesLayerUrl = params.get('routesLayer') ||
       'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
     // Strip accidental /query?... suffixes — FeatureLayer needs the layer root URL.
     routesLayerUrl = String(routesLayerUrl).split('/query')[0].replace(/\/$/, '');
     var routesDefinition = params.get('routesWhere') || 'active = 1';
+    // Cartographic bus-line layer. Passing an empty visualLayer disables it.
+    var visualLayerUrl = params.get('visualLayer');
+    if (visualLayerUrl === null) {
+      visualLayerUrl =
+        'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/1';
+    }
+    visualLayerUrl = String(visualLayerUrl).split('/query')[0].replace(/\/$/, '');
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -92,9 +132,12 @@
               expires: expires,
               ssl: true
             });
-            // Belt-and-suspenders: always attach the portal token to Bus_Lanes_BTS requests.
+            // Belt-and-suspenders: attach the portal token to every service on
+            // this ArcGIS Server, not just Bus_Lanes_BTS — the cartographic
+            // bus-line layer lives under Hosted/ and needs the same token.
+            // Only fills the token in when absent, so it cannot override one.
             esriConfig.request.interceptors.push({
-              urls: /esrirw\.rw\/server\/rest\/services\/Bus_Lanes_BTS/i,
+              urls: /esrirw\.rw\/server\/rest\/services/i,
               before: function(params) {
                 params.requestOptions = params.requestOptions || {};
                 params.requestOptions.query = params.requestOptions.query || {};
@@ -104,6 +147,50 @@
               }
             });
           } catch (e) {}
+        }
+
+        // Cartographic bus-line layer (Bus_Line_Kigali_export) — the blue base
+        // road network. The service publishes a grey drawingInfo; we override it
+        // so every bus road reads blue, and green is left to mean one thing only:
+        // a live trip is running on it (painted by routeLayer above). Same width
+        // as the service symbol, so only the hue changes. Sits at the bottom of
+        // the stack, so operational layers and the selected trip draw over it.
+        if (visualLayerUrl) {
+          busLineVisualLayer = new FeatureLayer({
+            url: visualLayerUrl,
+            title: 'Bus lines (map visual)',
+            outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
+            renderer: {
+              type: 'simple',
+              symbol: {
+                type: 'simple-line',
+                color: [56, 189, 248, 0.9],
+                width: 4,
+                style: 'solid'
+              }
+            },
+            popupEnabled: true,
+            popupTemplate: {
+              title: '{route_name}',
+              content: [
+                {
+                  type: 'fields',
+                  fieldInfos: [
+                    { fieldName: 'route_id', label: 'Route ID' },
+                    { fieldName: 'corridor', label: 'Corridor' },
+                    { fieldName: 'direction', label: 'Direction' },
+                    { fieldName: 'length_km', label: 'Length (km)' }
+                  ]
+                }
+              ]
+            }
+          });
+          // A visual layer must never break the operations map: if it fails to
+          // load (token, service down, renamed), drop it and carry on.
+          busLineVisualLayer.load().catch(function (e) {
+            if (window.console) console.warn('Bus line visual layer unavailable:', e && e.message);
+            if (busLineVisualLayer) busLineVisualLayer.visible = false;
+          });
         }
 
         // Network-wide background layers from Bus_Lanes_BTS FeatureServer.
@@ -146,7 +233,9 @@
           title: 'Bus stops',
           outFields: ['stop_id', 'name', 'speed_kmh'],
           popupEnabled: false,
-          visible: false,
+          // Network-wide stops are the default view; drawRoute hides them once
+          // a trip is selected so only that route's numbered stops show.
+          visible: true,
           popupTemplate: {
             title: '{name}',
             content: [
@@ -188,13 +277,17 @@
         vehicleLayer = new GraphicsLayer({ title: 'Vehicles', listMode: 'hide' });
 
         var map = new Map({ basemap: 'satellite' });
-        map.addMany([
-          busRoutesFeatureLayer,
-          busStopsFeatureLayer,
-          routeLayer,
-          stopLayer,
-          vehicleLayer
-        ]);
+        // Bottom to top: cartographic lines, operational lanes/stops, then the
+        // selected trip and vehicles.
+        map.addMany(
+          (busLineVisualLayer ? [busLineVisualLayer] : []).concat([
+            busRoutesFeatureLayer,
+            busStopsFeatureLayer,
+            routeLayer,
+            stopLayer,
+            vehicleLayer
+          ])
+        );
         window.__basemapName = 'satellite';
 
         view = new MapView({
@@ -264,21 +357,22 @@
 
         var polyline = data.polyline;
         var stops = data.stops || [];
-        // Route workflow: only numbered stops on the selected trip route — hide network-wide layers.
-        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = false;
-        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = stops.length === 0 && !(polyline && polyline.length >= 2);
+        // Route workflow: only numbered stops on the selected trip route — hide
+        // network-wide layers. Clearing the selection brings them back.
+        var networkVisible = stops.length === 0 && !(polyline && polyline.length >= 2);
+        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = networkVisible;
+        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = networkVisible;
         routePath = polyline && polyline.length >= 2 ? polyline : null;
+        routeStopsCache = stops;
+        lastProgressKey = '';
 
         if (polyline && polyline.length >= 2) {
-          var line = new Polyline({ paths: [polyline] });
-          routeLayer.add(new Graphic({
-            geometry: line,
-            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
-          }));
-          routeLayer.add(new Graphic({
-            geometry: line,
-            symbol: new SimpleLineSymbol({ color: '#16A34A', width: 3, cap: 'round', join: 'round' })
-          }));
+          var followFe = findVehicleEntry(followingTripId);
+          if (followFe) {
+            paintRouteProgress(followFe.lon, followFe.lat);
+          } else {
+            paintRouteProgress(null, null);
+          }
 
           if (!followingTripId && !pendingFocusTripId && Date.now() >= routeZoomSuppressedUntil) {
             var lngs = polyline.map(function(c) { return c[0]; });
@@ -357,6 +451,88 @@
     var vehicleAnimRunning = false;
     var svgIconCache = {};
     var routePath = null;
+    var routeStopsCache = [];
+    var lastProgressKey = '';
+
+    /** Split [lng,lat][] at the nearest vertex — NEVER inject the bus GPS into
+     *  the path (that drew a straight "link" line across buildings). */
+    function splitRouteAtBus(path, lon, lat) {
+      if (!path || path.length < 2) return null;
+      var cosLat = Math.cos(lat * Math.PI / 180);
+      var best = 0, bestD = Infinity;
+      for (var i = 0; i < path.length; i++) {
+        var dx = (path[i][0] - lon) * cosLat;
+        var dy = path[i][1] - lat;
+        var d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      // ~80 m — if the bus is off the polyline, don't fabricate a connector.
+      var meters = Math.sqrt(bestD) * 111320;
+      if (meters > 80) return null;
+
+      var traversed = path.slice(0, Math.max(1, best + 1));
+      var remaining = path.slice(Math.max(0, best));
+      if (remaining.length < 2) remaining = path.slice(Math.max(0, path.length - 2));
+      if (traversed.length < 2) traversed = path.slice(0, 2);
+      return { traversed: traversed, remaining: remaining };
+    }
+
+    function paintRouteProgress(lon, lat) {
+      if (!routeLayer || !routePath || routePath.length < 2) return;
+      var key = (lon != null ? lon.toFixed(5) : '') + ':' + (lat != null ? lat.toFixed(5) : '');
+      if (key && key === lastProgressKey) return;
+      lastProgressKey = key;
+
+      require([
+        'esri/Graphic', 'esri/geometry/Polyline', 'esri/symbols/SimpleLineSymbol'
+      ], function(Graphic, Polyline, SimpleLineSymbol) {
+        routeLayer.removeAll();
+
+        // Progress split only when the bus sits on the road geometry. Otherwise
+        // paint the full route — never a straight bus→route shortcut.
+        var split = (lon != null && lat != null) ? splitRouteAtBus(routePath, lon, lat) : null;
+        if (split) {
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.traversed] }),
+            symbol: new SimpleLineSymbol({
+              color: [148, 163, 184, 0.85], width: 4, cap: 'round', join: 'round'
+            })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.remaining] }),
+            symbol: new SimpleLineSymbol({
+              color: [255, 255, 255, 0.95], width: 6, cap: 'round', join: 'round'
+            })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [split.remaining] }),
+            symbol: new SimpleLineSymbol({
+              color: '#16A34A', width: 3.5, cap: 'round', join: 'round'
+            })
+          }));
+        } else {
+          var full = new Polyline({ paths: [routePath] });
+          routeLayer.add(new Graphic({
+            geometry: full,
+            symbol: new SimpleLineSymbol({ color: [255,255,255,0.95], width: 5, cap: 'round', join: 'round' })
+          }));
+          routeLayer.add(new Graphic({
+            geometry: full,
+            symbol: new SimpleLineSymbol({ color: '#16A34A', width: 3, cap: 'round', join: 'round' })
+          }));
+        }
+      });
+    }
+
+    function refreshRouteProgressFromFollow() {
+      var id = followingTripId;
+      var fe = findVehicleEntry(id);
+      if (!id || !fe) {
+        if (routePath) paintRouteProgress(null, null);
+        return;
+      }
+      paintRouteProgress(fe.lon, fe.lat);
+    }
 
     function svgDataUri(svg) {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
@@ -476,8 +652,12 @@
         }
         e.label.geometry = geom;
         e.lon = lon; e.lat = lat; e.hdg = hdg;
-        if (followingTripId === id) {
+        if (sameTripId(followingTripId, id)) {
           syncNavCamera(lon, lat, hdg, false);
+          if (now - (e._lastProgressAt || 0) > 900) {
+            e._lastProgressAt = now;
+            paintRouteProgress(lon, lat);
+          }
         }
         if (raw < 1) any = true; else e.anim = null;
       });
@@ -485,9 +665,9 @@
         requestAnimationFrame(vehicleAnimTick);
       } else {
         vehicleAnimRunning = false;
-        if (followingTripId && vehicleMarkers[followingTripId]) {
-          var fe = vehicleMarkers[followingTripId];
-          syncNavCamera(fe.lon, fe.lat, fe.hdg, false);
+        var followFe = findVehicleEntry(followingTripId);
+        if (followingTripId && followFe) {
+          syncNavCamera(followFe.lon, followFe.lat, followFe.hdg, false);
         }
       }
     }
@@ -498,9 +678,10 @@
         var seen = {};
         (tracking || []).forEach(function(t) {
           if (t.longitude == null || t.latitude == null) return;
-          seen[t.trip_id] = true;
+          var tripKey = findVehicleKey(t.trip_id) || t.trip_id;
+          seen[tripKey] = true;
           var connected = !!t.gps_connected;
-          var e = vehicleMarkers[t.trip_id];
+          var e = vehicleMarkers[tripKey];
           if (!e) {
             var geom = { type: 'point', longitude: t.longitude, latitude: t.latitude };
             var initHdg = routeSnappedHeading(t.longitude, t.latitude, t.heading || null);
@@ -516,13 +697,13 @@
               attributes: { tripId: t.trip_id }
             });
             vehicleLayer.addMany([marker, label]);
-            vehicleMarkers[t.trip_id] = {
+            vehicleMarkers[tripKey] = {
               marker: marker, label: label,
               lon: t.longitude, lat: t.latitude, hdg: initHdg,
               travelHdg: t.heading || null,
               connected: connected, anim: null
             };
-            if (pendingFocusTripId === t.trip_id || followingTripId === t.trip_id) {
+            if (sameTripId(pendingFocusTripId, t.trip_id) || sameTripId(followingTripId, t.trip_id)) {
               tryFocusVehicle();
             }
             return;
@@ -531,6 +712,9 @@
             e.label.symbol = vehicleLabelSymbol(t.vehicle_plate, connected);
           }
           e.connected = connected;
+          // Keep attribute in sync with latest id form from the server.
+          e.marker.attributes.tripId = t.trip_id;
+          e.label.attributes.tripId = t.trip_id;
 
           var movedMeters = Math.hypot(
             (t.latitude - e.lat) * 111320,
@@ -557,7 +741,7 @@
             e.label.geometry = snapGeom;
             e.lon = t.longitude; e.lat = t.latitude; e.hdg = newHdg;
             e.anim = null;
-            if (followingTripId === t.trip_id) syncNavCamera(e.lon, e.lat, e.hdg, true);
+            if (sameTripId(followingTripId, t.trip_id)) syncNavCamera(e.lon, e.lat, e.hdg, true);
           } else {
             e.anim = {
               start: Date.now(),
@@ -575,7 +759,7 @@
             var gone = vehicleMarkers[id];
             vehicleLayer.removeMany([gone.marker, gone.label]);
             delete vehicleMarkers[id];
-            if (followingTripId === id) followingTripId = null;
+            if (sameTripId(followingTripId, id)) followingTripId = null;
           }
         });
       });
@@ -590,7 +774,7 @@
       followingTripId = tripId;
       pendingFocusTripId = tripId;
       routeZoomSuppressedUntil = Date.now() + 5000;
-      var fe = vehicleMarkers[tripId];
+      var fe = findVehicleEntry(tripId);
       if (fe) {
         pendingFocusTripId = null;
         lastCamFollowAt = 0;
@@ -603,7 +787,7 @@
     function tryFocusVehicle() {
       var id = pendingFocusTripId || followingTripId;
       if (!id || !view) return false;
-      var fe = vehicleMarkers[id];
+      var fe = findVehicleEntry(id);
       if (!fe) return false;
       followingTripId = id;
       pendingFocusTripId = null;
@@ -616,10 +800,14 @@
       var data = event.data;
       if (!data || !data.type) return;
       if (data.type === 'setRoute') drawRoute(data);
-      if (data.type === 'setTracking') drawVehicles(data.tracking);
+      if (data.type === 'setTracking') {
+        drawVehicles(data.tracking);
+        refreshRouteProgressFromFollow();
+      }
       if (data.type === 'setHighlightStop') applyHighlight(data.stopId);
       if (data.type === 'followVehicle') {
         startFollow(data.tripId || null, true);
+        refreshRouteProgressFromFollow();
       }
       if (data.type === 'setCenter' && view && !followingTripId) {
         view.goTo({
