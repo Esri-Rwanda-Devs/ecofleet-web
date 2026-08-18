@@ -27,14 +27,51 @@
   <div id="viewDiv"></div>
   <script>
     var view, routeLayer, stopLayer, vehicleLayer, mapReadySent = false;
-    var busStopsFeatureLayer = null, busRoutesFeatureLayer = null;
-    var busLineVisualLayer = null;
+    var filterRouteLayer = null, filterStopLayer = null;
+    /** Labels for pinned-route stops — a FeatureLayer, so Esri declutters them. */
+    var filterStopLabelLayer = null;
+    // The city-wide network, drawn from the geodatabase (bus_line_kigali /
+    // bus_stops_kigali, served by the backend) rather than the Bus_Lanes_BTS
+    // FeatureServer. That published service still carries the retired STP-* stop
+    // set and the pre-rebuild lines, so it no longer agrees with what the
+    // backend serves. The dashboard feeds these layers via `setNetwork`.
+    var networkRouteLayer = null, networkStopLayer = null;
+    /** Kept so drawNetwork() can swap the stop layer in after init. */
+    var mapObject = null;
+    /** Below this scale the stop names appear; above it they would collide. */
+    var STOP_LABEL_MIN_SCALE = 25000;
     var highlightGraphic = null, highlightStopId = null;
     var followingTripId = null;
     var pendingFocusTripId = null;
     var routeZoomSuppressedUntil = 0;
     var NAV_ZOOM = 18;
     var lastCamFollowAt = 0;
+    // The operator grabbed the map while a trip was selected. Gates ONLY the
+    // follow camera — `followingTripId` stays set, because it also drives the
+    // route-progress paint and suppresses drawRoute's auto-zoom. Clearing the
+    // trip here would freeze the progress line and hand the camera to a second
+    // fight. Re-arms when a trip is (re)selected or its bus is clicked.
+    var followCamReleased = false;
+
+    // Route-filter overlay state. The dashboard can pin one or many routes on
+    // the map independently of whichever trip is selected, so the two features
+    // share the network-layer visibility rule in syncNetworkLayers().
+    var routeFilterActive = false;
+    var selectedRouteActive = false;
+    var lastRouteFilterFitKey = null;
+
+    /**
+     * The network layers are background context. They hide as soon as the
+     * operator narrows the map — by selecting a trip OR by pinning routes with
+     * the filter — and return only when both are cleared. Hiding them is what
+     * makes the filter read as a colour change: the blue base drops away and the
+     * pinned routes come back in their own palette.
+     */
+    function syncNetworkLayers() {
+      var visible = !routeFilterActive && !selectedRouteActive;
+      if (networkRouteLayer) networkRouteLayer.visible = visible;
+      if (networkStopLayer) networkStopLayer.visible = visible;
+    }
 
     /** `{uuid}` and `uuid` must match for follow / marker updates. */
     function normalizeTripId(id) {
@@ -69,21 +106,9 @@
     var params = new URLSearchParams(window.location.search);
     var arcgisToken = params.get('token');
     var portalUrl = params.get('portal') || 'https://esrirw.rw/portal';
-    var stopsLayerUrl = params.get('stopsLayer') ||
-      'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/0';
-    stopsLayerUrl = String(stopsLayerUrl).split('/query')[0].replace(/\/$/, '');
-    var routesLayerUrl = params.get('routesLayer') ||
-      'https://esrirw.rw/server/rest/services/Bus_Lanes_BTS/FeatureServer/1';
-    // Strip accidental /query?... suffixes — FeatureLayer needs the layer root URL.
-    routesLayerUrl = String(routesLayerUrl).split('/query')[0].replace(/\/$/, '');
-    var routesDefinition = params.get('routesWhere') || 'active = 1';
-    // Cartographic bus-line layer. Passing an empty visualLayer disables it.
-    var visualLayerUrl = params.get('visualLayer');
-    if (visualLayerUrl === null) {
-      visualLayerUrl =
-        'https://esrirw.rw/server/rest/services/Hosted/Bus_Lanes_BTS/FeatureServer/1';
-    }
-    visualLayerUrl = String(visualLayerUrl).split('/query')[0].replace(/\/$/, '');
+    /** Base colour for the whole geodatabase network. */
+    var NETWORK_LINE_COLOR = [59, 130, 246, 0.85];   // #3B82F6
+    var NETWORK_STOP_COLOR = [147, 197, 253, 0.95];  // #93C5FD
 
     function hideLoading() {
       var el = document.getElementById('loading');
@@ -102,12 +127,12 @@
         'esri/Map',
         'esri/views/MapView',
         'esri/layers/GraphicsLayer',
-        'esri/layers/FeatureLayer',
         'esri/layers/OpenStreetMapLayer',
         'esri/Basemap',
         'esri/identity/IdentityManager',
-        'esri/config'
-      ], function(Map, MapView, GraphicsLayer, FeatureLayer, OpenStreetMapLayer, Basemap, identityManager, esriConfig) {
+        'esri/config',
+        'esri/core/reactiveUtils'
+      ], function(Map, MapView, GraphicsLayer, OpenStreetMapLayer, Basemap, identityManager, esriConfig, reactiveUtils) {
 
         if (arcgisToken) {
           try {
@@ -149,145 +174,37 @@
           } catch (e) {}
         }
 
-        // Cartographic bus-line layer (Bus_Line_Kigali_export) — the blue base
-        // road network. The service publishes a grey drawingInfo; we override it
-        // so every bus road reads blue, and green is left to mean one thing only:
-        // a live trip is running on it (painted by routeLayer above). Same width
-        // as the service symbol, so only the hue changes. Sits at the bottom of
-        // the stack, so operational layers and the selected trip draw over it.
-        if (visualLayerUrl) {
-          busLineVisualLayer = new FeatureLayer({
-            url: visualLayerUrl,
-            title: 'Bus lines (map visual)',
-            outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km'],
-            renderer: {
-              type: 'simple',
-              symbol: {
-                type: 'simple-line',
-                color: [56, 189, 248, 0.9],
-                width: 4,
-                style: 'solid'
-              }
-            },
-            popupEnabled: true,
-            popupTemplate: {
-              title: '{route_name}',
-              content: [
-                {
-                  type: 'fields',
-                  fieldInfos: [
-                    { fieldName: 'route_id', label: 'Route ID' },
-                    { fieldName: 'corridor', label: 'Corridor' },
-                    { fieldName: 'direction', label: 'Direction' },
-                    { fieldName: 'length_km', label: 'Length (km)' }
-                  ]
-                }
-              ]
-            }
-          });
-          // A visual layer must never break the operations map: if it fails to
-          // load (token, service down, renamed), drop it and carry on.
-          busLineVisualLayer.load().catch(function (e) {
-            if (window.console) console.warn('Bus line visual layer unavailable:', e && e.message);
-            if (busLineVisualLayer) busLineVisualLayer.visible = false;
-          });
-        }
+        // The geodatabase network, drawn as graphics rather than published
+        // FeatureLayers. Bus_Lanes_BTS still serves the retired STP-* stops and
+        // the pre-rebuild lines, so it disagrees with the backend; the dashboard
+        // pushes the current network in via `setNetwork` instead. Bottom of the
+        // stack, so pinned routes, the selected trip and vehicles draw over it.
+        networkRouteLayer = new GraphicsLayer({ title: 'Bus network', listMode: 'hide' });
+        // networkStopLayer is built in drawNetwork() — it is a client-side
+        // FeatureLayer, not a GraphicsLayer, because only a FeatureLayer can
+        // label its features with a minScale and declutter the collisions.
+        // ~700 stop names drawn as plain graphics would be a solid smear.
 
-        // Network-wide background layers from Bus_Lanes_BTS FeatureServer.
-        // Selected trip route/stops still render on GraphicsLayers above these.
-        busRoutesFeatureLayer = new FeatureLayer({
-          url: routesLayerUrl,
-          title: 'Bus lanes (active)',
-          definitionExpression: routesDefinition,
-          outFields: ['route_id', 'route_name', 'corridor', 'direction', 'length_km', 'active'],
-          opacity: 0.85,
-          popupEnabled: true,
-          popupTemplate: {
-            title: '{route_name}',
-            content: [
-              {
-                type: 'fields',
-                fieldInfos: [
-                  { fieldName: 'route_id', label: 'Route ID' },
-                  { fieldName: 'corridor', label: 'Corridor' },
-                  { fieldName: 'direction', label: 'Direction' },
-                  { fieldName: 'length_km', label: 'Length (km)' },
-                  { fieldName: 'active', label: 'Active' }
-                ]
-              }
-            ]
-          },
-          renderer: {
-            type: 'simple',
-            symbol: {
-              type: 'simple-line',
-              color: [56, 189, 248, 0.75],
-              width: 2.5,
-              style: 'solid'
-            }
-          }
-        });
-
-        busStopsFeatureLayer = new FeatureLayer({
-          url: stopsLayerUrl,
-          title: 'Bus stops',
-          outFields: ['stop_id', 'name', 'speed_kmh'],
-          popupEnabled: false,
-          // Network-wide stops are the default view; drawRoute hides them once
-          // a trip is selected so only that route's numbered stops show.
-          visible: true,
-          popupTemplate: {
-            title: '{name}',
-            content: [
-              {
-                type: 'fields',
-                fieldInfos: [
-                  { fieldName: 'stop_id', label: 'Stop ID' },
-                  { fieldName: 'speed_kmh', label: 'Speed (km/h)' }
-                ]
-              }
-            ]
-          },
-          renderer: {
-            type: 'simple',
-            symbol: {
-              type: 'simple-marker',
-              style: 'circle',
-              color: [245, 158, 11, 0.9],
-              size: 7,
-              outline: { color: [255, 255, 255, 0.95], width: 1.5 }
-            }
-          },
-          labelingInfo: [{
-            labelExpressionInfo: { expression: '$feature.name' },
-            labelPlacement: 'above-center',
-            minScale: 40000,
-            symbol: {
-              type: 'text',
-              color: '#fff',
-              haloColor: '#0f172a',
-              haloSize: 1.5,
-              font: { size: 9, weight: 'bold' }
-            }
-          }]
-        });
-
+        filterRouteLayer = new GraphicsLayer({ title: 'Filtered routes', listMode: 'hide' });
+        filterStopLayer = new GraphicsLayer({ title: 'Filtered route stops', listMode: 'hide' });
         routeLayer = new GraphicsLayer({ title: 'Selected route', listMode: 'hide' });
         stopLayer = new GraphicsLayer({ title: 'Selected stops', listMode: 'hide' });
         vehicleLayer = new GraphicsLayer({ title: 'Vehicles', listMode: 'hide' });
 
         var map = new Map({ basemap: 'satellite' });
-        // Bottom to top: cartographic lines, operational lanes/stops, then the
-        // selected trip and vehicles.
-        map.addMany(
-          (busLineVisualLayer ? [busLineVisualLayer] : []).concat([
-            busRoutesFeatureLayer,
-            busStopsFeatureLayer,
-            routeLayer,
-            stopLayer,
-            vehicleLayer
-          ])
-        );
+        mapObject = map;
+        // Bottom to top: the city network, then the pinned route filter, then
+        // the selected trip and vehicles on top — a filtered route must never
+        // paint over the trip an operator is actively watching. drawNetwork()
+        // splices the stop layer in at index 1, straight above the lines.
+        map.addMany([
+          networkRouteLayer,
+          filterRouteLayer,
+          filterStopLayer,
+          routeLayer,
+          stopLayer,
+          vehicleLayer
+        ]);
         window.__basemapName = 'satellite';
 
         view = new MapView({
@@ -299,10 +216,27 @@
           ui: { components: [] }
         });
 
-        // Only selected-trip graphics drive fleet/arrivals UI — keep FeatureLayer
-        // interactions as popups so backend UUID-based workflows stay intact.
+        // Hand the camera back the moment the operator navigates. Without this
+        // the follow loop re-asserted center+zoom every 320 ms, so panning away
+        // snapped back and zooming out below NAV_ZOOM was undone on the next
+        // tick. `interacting` covers drag, wheel, pinch and keyboard nav, and is
+        // false during our own goTo (that sets `animation` instead), so the
+        // camera never releases itself. The explicit wheel handler is belt-and-
+        // braces: a wheel notch can be over before `interacting` is sampled.
+        reactiveUtils.watch(
+          function() { return view.interacting; },
+          function(isInteracting) { if (isInteracting) releaseFollowCamera(); }
+        );
+        view.on('mouse-wheel', releaseFollowCamera);
+
+        // Stops carry `kind: 'stop'` on every layer that draws them, so a click
+        // on a network stop reaches the dashboard the same way a selected-trip
+        // or pinned-route stop does.
         view.on('click', function(event) {
-          view.hitTest(event, { include: [vehicleLayer, stopLayer] }).then(function(res) {
+          // networkStopLayer only exists once a network payload has arrived.
+          var targets = [vehicleLayer, stopLayer, filterStopLayer];
+          if (networkStopLayer) targets.push(networkStopLayer);
+          view.hitTest(event, { include: targets }).then(function(res) {
             var vehicleHit = res.results.find(function(r) {
               return r.graphic && r.graphic.layer === vehicleLayer && r.graphic.attributes && r.graphic.attributes.tripId;
             });
@@ -344,6 +278,136 @@
       });
     }
 
+    /**
+     * Paint the whole city network from the geodatabase.
+     *
+     * Every route draws in one blue so the network reads as a single system;
+     * colour is reserved for the route filter, where it distinguishes the routes
+     * an operator has pinned. A dark casing under each line keeps it legible on
+     * satellite imagery. Stops label only past `minScale`, otherwise ~700 labels
+     * collide at city zoom.
+     */
+    /**
+     * Map label for a stop: drop the trailing route tag the source appends to
+     * per-direction platform records, e.g. "ADPR KANOMBE(127R)" -> "ADPR
+     * KANOMBE". Only a tag that looks like a route code is removed, so a real
+     * parenthetical such as "NDERA(GASIMA)" survives.
+     */
+    function stopLabel(name) {
+      var s = String(name == null ? '' : name).trim();
+      return s.replace(/\s*\(\s*\d+[A-Za-z]*\s*\)\s*$/, '').trim() || s;
+    }
+
+    /** Drop the pinned-route label layer; it is rebuilt on every filter change. */
+    function clearFilterStopLabels() {
+      if (filterStopLabelLayer && mapObject) mapObject.remove(filterStopLabelLayer);
+      filterStopLabelLayer = null;
+    }
+
+    function drawNetwork(data) {
+      if (!networkRouteLayer || !mapObject || !view) return;
+      require([
+        'esri/Graphic', 'esri/geometry/Point', 'esri/geometry/Polyline',
+        'esri/layers/FeatureLayer', 'esri/symbols/SimpleLineSymbol'
+      ], function(Graphic, Point, Polyline, FeatureLayer, SimpleLineSymbol) {
+
+        networkRouteLayer.removeAll();
+
+        (data.routes || []).forEach(function(route) {
+          if (!route || !route.polyline || route.polyline.length < 2) return;
+          var geom = new Polyline({ paths: [route.polyline] });
+          networkRouteLayer.add(new Graphic({
+            geometry: geom,
+            symbol: new SimpleLineSymbol({
+              color: [15, 23, 42, 0.55], width: 5, cap: 'round', join: 'round'
+            })
+          }));
+          networkRouteLayer.add(new Graphic({
+            geometry: geom,
+            attributes: { kind: 'networkRoute', id: String(route.id), name: route.name },
+            symbol: new SimpleLineSymbol({
+              color: NETWORK_LINE_COLOR, width: 2.5, cap: 'round', join: 'round'
+            }),
+            popupTemplate: { title: '{name}' }
+          }));
+        });
+
+        var oid = 0;
+        var stopFeatures = (data.stops || []).reduce(function(acc, stop) {
+          if (!isFinite(stop.longitude) || !isFinite(stop.latitude)) return acc;
+          oid += 1;
+          acc.push(new Graphic({
+            geometry: new Point({ longitude: stop.longitude, latitude: stop.latitude }),
+            // `kind` mirrors the GraphicsLayer stops so one click handler serves
+            // the network, the pinned filter and the selected trip alike.
+            // `label` drops the trailing route tag — "ADPR KANOMBE(127R)" reads
+            // as "ADPR KANOMBE" on the map, while clicks still carry the full
+            // name so the operator can tell the two platforms apart.
+            attributes: {
+              ObjectID: oid,
+              kind: 'stop',
+              id: String(stop.id),
+              name: stop.name || '',
+              label: stopLabel(stop.name)
+            }
+          }));
+          return acc;
+        }, []);
+
+        // A client-side FeatureLayer has no applyEdits-free way to swap its
+        // whole source, so rebuild and splice it back in above the lines.
+        if (networkStopLayer) mapObject.remove(networkStopLayer);
+        networkStopLayer = new FeatureLayer({
+          title: 'Bus stops',
+          listMode: 'hide',
+          source: stopFeatures,
+          objectIdField: 'ObjectID',
+          geometryType: 'point',
+          spatialReference: { wkid: 4326 },
+          fields: [
+            { name: 'ObjectID', type: 'oid' },
+            { name: 'kind', type: 'string' },
+            { name: 'id', type: 'string' },
+            { name: 'name', type: 'string' },
+            { name: 'label', type: 'string' }
+          ],
+          popupEnabled: false,
+          renderer: {
+            type: 'simple',
+            symbol: {
+              type: 'simple-marker',
+              style: 'circle',
+              color: NETWORK_STOP_COLOR,
+              size: 5,
+              outline: { color: [15, 23, 42, 0.8], width: 1 }
+            }
+          },
+          // Names only once the operator has zoomed past a corridor's worth of
+          // map. Esri drops colliding labels for us, so the survivors stay
+          // readable instead of stacking into a smear.
+          labelsVisible: true,
+          labelingInfo: [{
+            labelExpressionInfo: { expression: '$feature.label' },
+            labelPlacement: 'above-center',
+            minScale: STOP_LABEL_MIN_SCALE,
+            deconflictionStrategy: 'static',
+            symbol: {
+              type: 'text',
+              color: '#FFFFFF',
+              haloColor: '#0F172A',
+              haloSize: 1.6,
+              font: { size: 9, weight: 'bold' }
+            }
+          }]
+        });
+        mapObject.add(networkStopLayer, 1);
+
+        // Respect whatever narrowing is already in effect — a late-arriving
+        // network payload must not pop back over a selected trip.
+        syncNetworkLayers();
+      });
+    }
+
     function drawRoute(data) {
       if (!routeLayer || !view) return;
       require([
@@ -359,9 +423,8 @@
         var stops = data.stops || [];
         // Route workflow: only numbered stops on the selected trip route — hide
         // network-wide layers. Clearing the selection brings them back.
-        var networkVisible = stops.length === 0 && !(polyline && polyline.length >= 2);
-        if (busStopsFeatureLayer) busStopsFeatureLayer.visible = networkVisible;
-        if (busRoutesFeatureLayer) busRoutesFeatureLayer.visible = networkVisible;
+        selectedRouteActive = stops.length > 0 || !!(polyline && polyline.length >= 2);
+        syncNetworkLayers();
         routePath = polyline && polyline.length >= 2 ? polyline : null;
         routeStopsCache = stops;
         lastProgressKey = '';
@@ -374,7 +437,10 @@
             paintRouteProgress(null, null);
           }
 
-          if (!followingTripId && !pendingFocusTripId && Date.now() >= routeZoomSuppressedUntil) {
+          // While routes are pinned, the filter owns the camera — otherwise the
+          // selected trip's route would yank the view back off the pinned set.
+          if (!routeFilterActive && !followingTripId && !pendingFocusTripId &&
+              Date.now() >= routeZoomSuppressedUntil) {
             var lngs = polyline.map(function(c) { return c[0]; });
             var lats = polyline.map(function(c) { return c[1]; });
             view.goTo(new Extent({
@@ -414,6 +480,177 @@
 
         applyHighlight(highlightStopId);
         tryFocusVehicle();
+      });
+    }
+
+    /**
+     * Draw the routes pinned by the dashboard's route filter.
+     *
+     * Each route gets its own colour (assigned dashboard-side so the legend and
+     * the map agree) and is drawn as a white casing under a coloured line, which
+     * is what keeps a thin line legible over satellite imagery. Intermediate
+     * stops are small dots; the endpoints are larger and labelled with the route
+     * name, so several routes can overlap without turning into noise.
+     *
+     * Deliberately NOT numbered like drawRoute's stops — numbering only means
+     * something for a single trip's ordered journey.
+     */
+    function drawRouteFilter(data) {
+      if (!filterRouteLayer || !view) return;
+      require([
+        'esri/Graphic', 'esri/geometry/Point', 'esri/geometry/Polyline',
+        'esri/geometry/Extent', 'esri/layers/FeatureLayer',
+        'esri/symbols/SimpleMarkerSymbol', 'esri/symbols/SimpleLineSymbol',
+        'esri/symbols/TextSymbol'
+      ], function(Graphic, Point, Polyline, Extent, FeatureLayer, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol) {
+
+        filterRouteLayer.removeAll();
+        filterStopLayer.removeAll();
+        clearFilterStopLabels();
+
+        var routes = (data.routes || []).filter(function(r) {
+          return r && r.polyline && r.polyline.length >= 2;
+        });
+
+        routeFilterActive = (data.routes || []).length > 0;
+        syncNetworkLayers();
+
+        if (!routes.length) {
+          lastRouteFilterFitKey = null;
+          return;
+        }
+
+        var allLngs = [], allLats = [];
+        var labelFeatures = [], labelOid = 0;
+
+        routes.forEach(function(route) {
+          var color = route.color || '#22D3EE';
+          var path = route.polyline;
+          var geom = new Polyline({ paths: [path] });
+
+          filterRouteLayer.add(new Graphic({
+            geometry: geom,
+            symbol: new SimpleLineSymbol({
+              color: [255, 255, 255, 0.9], width: 6, cap: 'round', join: 'round'
+            })
+          }));
+          filterRouteLayer.add(new Graphic({
+            geometry: geom,
+            attributes: { kind: 'filterRoute', id: String(route.id), name: route.name },
+            symbol: new SimpleLineSymbol({
+              color: color, width: 3.5, cap: 'round', join: 'round'
+            })
+          }));
+
+          path.forEach(function(c) { allLngs.push(c[0]); allLats.push(c[1]); });
+
+          var stops = route.stops || [];
+          stops.forEach(function(stop, i) {
+            if (!isFinite(stop.longitude) || !isFinite(stop.latitude)) return;
+            var isEnd = i === 0 || i === stops.length - 1;
+            var pt = new Point({ longitude: stop.longitude, latitude: stop.latitude });
+            filterStopLayer.add(new Graphic({
+              geometry: pt,
+              attributes: { kind: 'stop', id: String(stop.id), name: stop.name },
+              symbol: new SimpleMarkerSymbol({
+                style: 'circle',
+                color: isEnd ? color : [255, 255, 255, 0.95],
+                size: isEnd ? 11 : 6,
+                outline: { color: isEnd ? [255, 255, 255, 0.95] : color, width: isEnd ? 2 : 1.5 }
+              })
+            }));
+            // The origin already carries the route-name tag added below; a stop
+            // name on the same point would sit right on top of it. Every other
+            // stop, destination included, gets its name.
+            if (i === 0) return;
+            labelOid += 1;
+            labelFeatures.push(new Graphic({
+              geometry: pt,
+              attributes: { ObjectID: labelOid, label: stopLabel(stop.name) }
+            }));
+          });
+
+          // Label the origin end only — one tag per route, not per stop.
+          var head = stops[0];
+          if (head && isFinite(head.longitude) && isFinite(head.latitude)) {
+            filterStopLayer.add(new Graphic({
+              geometry: new Point({ longitude: head.longitude, latitude: head.latitude }),
+              symbol: new TextSymbol({
+                text: route.name,
+                color: '#fff', haloColor: '#0F172A', haloSize: 2, yoffset: 14,
+                font: { size: 11, weight: 'bold' }
+              })
+            }));
+          }
+        });
+
+        // Stop names for the pinned routes, on their own client-side layer so
+        // Esri declutters them. Unlike the city-wide network layer there is no
+        // minScale: a pinned route is an explicit "show me this", so it labels
+        // at whatever zoom the operator is on and simply drops the names that
+        // do not fit. The markers stay on filterStopLayer; this layer is labels
+        // only, hence the invisible renderer.
+        if (mapObject && labelFeatures.length) {
+          filterStopLabelLayer = new FeatureLayer({
+            title: 'Pinned route stop names',
+            listMode: 'hide',
+            source: labelFeatures,
+            objectIdField: 'ObjectID',
+            geometryType: 'point',
+            spatialReference: { wkid: 4326 },
+            fields: [
+              { name: 'ObjectID', type: 'oid' },
+              { name: 'label', type: 'string' }
+            ],
+            popupEnabled: false,
+            renderer: {
+              type: 'simple',
+              symbol: {
+                type: 'simple-marker',
+                style: 'circle',
+                color: [0, 0, 0, 0],
+                size: 1,
+                outline: { color: [0, 0, 0, 0], width: 0 }
+              }
+            },
+            labelsVisible: true,
+            labelingInfo: [{
+              labelExpressionInfo: { expression: '$feature.label' },
+              labelPlacement: 'above-center',
+              deconflictionStrategy: 'static',
+              symbol: {
+                type: 'text',
+                color: '#FFFFFF',
+                haloColor: '#0F172A',
+                haloSize: 1.6,
+                yoffset: 8,
+                font: { size: 10, weight: 'bold' }
+              }
+            }]
+          });
+          var above = mapObject.layers.indexOf(filterStopLayer);
+          if (above >= 0) {
+            mapObject.add(filterStopLabelLayer, above + 1);
+          } else {
+            mapObject.add(filterStopLabelLayer);
+          }
+        }
+
+        // Fit only when the pinned set actually changes — refitting on every
+        // repaint would fight the operator every time they panned the map.
+        var fitKey = data.fitKey == null ? null : String(data.fitKey);
+        if (fitKey !== null && fitKey !== lastRouteFilterFitKey && allLngs.length) {
+          lastRouteFilterFitKey = fitKey;
+          followingTripId = null;
+          pendingFocusTripId = null;
+          view.goTo(new Extent({
+            xmin: Math.min.apply(null, allLngs) - 0.008,
+            ymin: Math.min.apply(null, allLats) - 0.008,
+            xmax: Math.max.apply(null, allLngs) + 0.008,
+            ymax: Math.max.apply(null, allLats) + 0.008,
+            spatialReference: { wkid: 4326 }
+          }), { duration: 800 }).catch(function() {});
+        }
       });
     }
 
@@ -621,10 +858,22 @@
       };
     }
 
+    /**
+     * Stop chasing the selected bus until follow is re-armed. Deliberately
+     * leaves `followingTripId` alone — see the followCamReleased declaration.
+     * Hoisted, so the view listeners in initMap can reference it.
+     */
+    function releaseFollowCamera() {
+      if (!followingTripId || followCamReleased) return;
+      followCamReleased = true;
+      // A queued focus would re-grab the camera as soon as the bus redraws.
+      pendingFocusTripId = null;
+    }
+
     // Smooth camera: center on the car at street zoom. Throttled so ArcGIS
     // isn't flooded with goTo/center writes every animation frame.
     function syncNavCamera(lon, lat, hdg, force) {
-      if (!view || !followingTripId) return;
+      if (!view || !followingTripId || followCamReleased) return;
       var now = Date.now();
       if (!force && now - lastCamFollowAt < 320) return;
       lastCamFollowAt = now;
@@ -773,6 +1022,7 @@
       }
       followingTripId = tripId;
       pendingFocusTripId = tripId;
+      followCamReleased = false;
       routeZoomSuppressedUntil = Date.now() + 5000;
       var fe = findVehicleEntry(tripId);
       if (fe) {
@@ -791,6 +1041,7 @@
       if (!fe) return false;
       followingTripId = id;
       pendingFocusTripId = null;
+      followCamReleased = false;
       lastCamFollowAt = 0;
       syncNavCamera(fe.lon, fe.lat, fe.hdg, true);
       return true;
@@ -799,7 +1050,9 @@
     window.addEventListener('message', function(event) {
       var data = event.data;
       if (!data || !data.type) return;
+      if (data.type === 'setNetwork') drawNetwork(data);
       if (data.type === 'setRoute') drawRoute(data);
+      if (data.type === 'setRouteFilter') drawRouteFilter(data);
       if (data.type === 'setTracking') {
         drawVehicles(data.tracking);
         refreshRouteProgressFromFollow();

@@ -14,11 +14,20 @@ import { TripDetailPanel } from '../components/TripDetailPanel';
 import { StopArrivalsCard } from '../components/StopArrivalsCard';
 import { AlertsFeed, AlertEvent } from '../components/AlertsFeed';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { RouteFilter } from '../components/RouteFilter';
 import { Logo } from '../components/Logo';
 import { SearchIcon } from '../components/Icons';
 import { formatRouteName, formatStopName } from '../utils/display-names';
+import { routeColorAt } from '../utils/route-colors';
 import { isSparseRoutePolyline, parseRoutePolyline } from '../utils/route-geometry';
-import { ArcGisConfig, BusStop, FleetOverview, Route, TripTrackingState } from '../types';
+import {
+  ArcGisConfig,
+  BusStop,
+  FleetOverview,
+  NetworkStop,
+  Route,
+  TripTrackingState,
+} from '../types';
 
 /** Poll cadence while the realtime socket is down. */
 const POLL_MS = 4000;
@@ -137,11 +146,20 @@ export function DashboardPage() {
   const [overview, setOverview] = useState<FleetOverview | null>(null);
   const [selectedTripId, setSelectedTripId] = useState<string>();
   const [routes, setRoutes] = useState<Route[]>([]);
+  /** Every stop in the geodatabase — the map's background stop layer. */
+  const [networkStops, setNetworkStops] = useState<NetworkStop[]>([]);
   const [routeDisplay, setRouteDisplay] = useState<{ polyline?: number[][]; stops?: BusStop[] }>();
   const [selectedStop, setSelectedStop] = useState<{ id: string; name: string } | null>(null);
   const [socketLive, setSocketLive] = useState(false);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [query, setQuery] = useState('');
+  /** Routes pinned by the route filter. Empty = no filter (follow the fleet). */
+  const [selectedRouteIds, setSelectedRouteIds] = useState<string[]>([]);
+  /** Bumped on every filter change so the map re-fits to the pinned routes. */
+  const [routeFilterFitKey, setRouteFilterFitKey] = useState(0);
+  const [routeGeoms, setRouteGeoms] = useState<
+    Map<string, { polyline?: number[][]; stops: BusStop[] }>
+  >(new Map());
   /** Header number click: filter map to active fleet or delayed only, then zoom. */
   const [statFocus, setStatFocus] = useState<'active' | 'delayed' | null>(null);
   const [fitBoundsKey, setFitBoundsKey] = useState(0);
@@ -171,11 +189,42 @@ export function DashboardPage() {
     );
   }, [tracking, searchQuery]);
 
-  /** Apply header stat focus (active / delayed) on top of stop search. */
+  const routeFilterActive = selectedRouteIds.length > 0;
+
+  /** Stable colour per route — position in the API list, not in the selection. */
+  const colorByRouteId = useMemo(
+    () => new Map(routes.map((r, i) => [r.id, routeColorAt(i)])),
+    [routes]
+  );
+
+  /** Tracking joins to routes by name, so the filter resolves to names too. */
+  const selectedRouteNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const id of selectedRouteIds) {
+      const route = routes.find((r) => r.id === id);
+      if (route) names.add(route.name);
+    }
+    return names;
+  }, [selectedRouteIds, routes]);
+
+  /** Live bus count per route, shown as a hint next to each row in the filter. */
+  const liveCountByRouteName = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of tracking) {
+      counts.set(t.route_name, (counts.get(t.route_name) ?? 0) + 1);
+    }
+    return counts;
+  }, [tracking]);
+
+  /** Stop search, then pinned routes, then header stat focus — in that order. */
   const mapTracking = useMemo(() => {
-    if (statFocus === 'delayed') return filteredTracking.filter((t) => t.is_delayed);
-    return filteredTracking;
-  }, [filteredTracking, statFocus]);
+    let list = filteredTracking;
+    if (selectedRouteNames.size > 0) {
+      list = list.filter((t) => selectedRouteNames.has(t.route_name));
+    }
+    if (statFocus === 'delayed') list = list.filter((t) => t.is_delayed);
+    return list;
+  }, [filteredTracking, statFocus, selectedRouteNames]);
 
   const fitPoints = useMemo(() => {
     if (fitOverride?.length) return fitOverride;
@@ -190,6 +239,15 @@ export function DashboardPage() {
     setSelectedTripId(undefined);
     setSelectedStop(null);
     setFitBoundsKey((k) => k + 1);
+  }, []);
+
+  const changeRouteFilter = useCallback((ids: string[]) => {
+    setSelectedRouteIds(ids);
+    setSelectedStop(null);
+    setFitOverride(null);
+    setStatFocus(null);
+    // Re-fit the camera to the new pinned set (or release it when cleared).
+    setRouteFilterFitKey((k) => k + 1);
   }, []);
 
   const selectTrip = useCallback((tripId: string | undefined) => {
@@ -333,6 +391,21 @@ export function DashboardPage() {
       .catch(console.error);
   }, [applyCorrections]);
 
+  // Background stop layer for the map. The route geometry rides along with
+  // /api/routes above, so this is the only extra request the network costs.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getNetworkStops()
+      .then((stops) => {
+        if (!cancelled) setNetworkStops(stops);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Network-wide stats for the command bar KPIs.
   useEffect(() => {
     void refreshOverview();
@@ -344,14 +417,21 @@ export function DashboardPage() {
   // selected trip, or of the first active trip when nothing is selected —
   // so a return trip's route appears the moment the driver starts it.
   // When searching by stop, prefer the first trip that serves that stop.
+  // While routes are pinned, the last fallback is dropped: auto-showing an
+  // unpinned route's line would contradict the filter the operator just set.
   const mapRouteName =
-    selectedTrip?.route_name ?? mapTracking[0]?.route_name ?? tracking[0]?.route_name;
+    selectedTrip?.route_name ??
+    mapTracking[0]?.route_name ??
+    (routeFilterActive ? undefined : tracking[0]?.route_name);
   const routeDisplayCacheRef = useRef<Map<string, { polyline?: number[][]; stops: BusStop[] }>>(
     new Map()
   );
 
   useEffect(() => {
-    if (!mapRouteName) return;
+    if (!mapRouteName) {
+      setRouteDisplay(undefined);
+      return;
+    }
     const route = routesRef.current.find((r) => r.name === mapRouteName);
     if (!route) return;
 
@@ -374,6 +454,97 @@ export function DashboardPage() {
       cancelled = true;
     };
   }, [mapRouteName, routes]);
+
+  // Geometry for every pinned route. Shares routeDisplayCacheRef with the
+  // selected-trip route above, so pinning a route already on screen costs
+  // nothing and the (slow) /api/routes/:id + ArcGIS solve runs at most once.
+  const routeFilterKey = selectedRouteIds.join('|');
+  useEffect(() => {
+    const ids = routeFilterKey ? routeFilterKey.split('|') : [];
+    if (!ids.length) {
+      setRouteGeoms(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const loaded = await Promise.all(
+        ids.map(async (id) => {
+          const cached = routeDisplayCacheRef.current.get(id);
+          if (cached) return [id, cached] as const;
+          const route = routesRef.current.find((r) => r.id === id);
+          if (!route) return null;
+          try {
+            const display = await loadRouteForMap(route);
+            routeDisplayCacheRef.current.set(id, display);
+            return [id, display] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (cancelled) return;
+      setRouteGeoms(
+        new Map(loaded.filter((e): e is NonNullable<typeof e> => e !== null))
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeFilterKey, routes]);
+
+  /**
+   * The whole network for the map's blue background layer.
+   *
+   * `/api/routes` already carries `route_polyline` for every route, so this
+   * costs no extra request — only the stop list is fetched separately. Routes
+   * whose geometry is missing or degenerate are dropped rather than drawn as a
+   * stray two-point line across the city.
+   */
+  const networkForMap = useMemo(() => {
+    const drawable = routes.flatMap((route) => {
+      const polyline = parseRoutePolyline(
+        route.route_polyline as Parameters<typeof parseRoutePolyline>[0]
+      );
+      if (!polyline || polyline.length < 2) return [];
+      return [
+        {
+          id: route.id,
+          name: formatRouteName(route.name).name || route.name,
+          polyline,
+        },
+      ];
+    });
+    return {
+      routes: drawable,
+      stops: networkStops.map((s) => ({
+        id: s.stop_id || s.id,
+        name: s.name,
+        longitude: s.longitude,
+        latitude: s.latitude,
+      })),
+    };
+  }, [routes, networkStops]);
+
+  /** Pinned routes + their colours, in the shape the map iframe expects. */
+  const routeFilterForMap = useMemo(() => {
+    const pinned = selectedRouteIds.flatMap((id) => {
+      const route = routes.find((r) => r.id === id);
+      if (!route) return [];
+      const geom = routeGeoms.get(id);
+      return [
+        {
+          id,
+          name: formatRouteName(route.name).name || route.name,
+          color: colorByRouteId.get(id) ?? routeColorAt(0),
+          polyline: geom?.polyline,
+          stops: geom?.stops,
+        },
+      ];
+    });
+    return { routes: pinned, fitKey: routeFilterFitKey };
+  }, [selectedRouteIds, routes, routeGeoms, colorByRouteId, routeFilterFitKey]);
 
   // Realtime feed: GPS pings arrive as fleet:update the moment the driver app
   // sends them; fleet:all re-syncs the whole list on (re)connect.
@@ -634,6 +805,14 @@ export function DashboardPage() {
                 </kbd>
               </label>
 
+              <RouteFilter
+                routes={routes}
+                selectedIds={selectedRouteIds}
+                onChange={changeRouteFilter}
+                liveCountByRouteName={liveCountByRouteName}
+                className="hidden md:block"
+              />
+
               <div className="flex items-center gap-0.5 rounded-2xl border border-line/50 bg-muted-bg/60 p-1">
                 <AlertsFeed alerts={alerts} />
                 <ThemeToggle className="h-9 w-9" />
@@ -647,7 +826,8 @@ export function DashboardPage() {
 
           {/* Mobile / tablet search + compact stats */}
           <div className="flex flex-col gap-2 border-t border-line/40 px-3 pb-2.5 pt-2 safe-px md:hidden">
-            <label className="relative flex w-full items-center rounded-2xl border border-line/50 bg-muted-bg/60 focus-within:border-primary/30 focus-within:bg-surface">
+            <div className="flex items-center gap-2">
+              <label className="relative flex min-w-0 flex-1 items-center rounded-2xl border border-line/50 bg-muted-bg/60 focus-within:border-primary/30 focus-within:bg-surface">
               <SearchIcon
                 size={15}
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
@@ -667,7 +847,15 @@ export function DashboardPage() {
                 aria-label="Search bus stop"
                 className="h-11 w-full rounded-2xl bg-transparent pl-9 pr-3 text-[1rem] font-medium text-ink placeholder:text-muted focus:outline-none"
               />
-            </label>
+              </label>
+              <RouteFilter
+                routes={routes}
+                selectedIds={selectedRouteIds}
+                onChange={changeRouteFilter}
+                liveCountByRouteName={liveCountByRouteName}
+                className="shrink-0"
+              />
+            </div>
             <div className="stat-strip w-full justify-between gap-1 overflow-x-auto">
               <StatItem
                 label="active"
@@ -700,7 +888,9 @@ export function DashboardPage() {
           <OperationsMap
             config={config}
             tracking={mapTracking}
+            network={networkForMap}
             selectedRoute={mapRouteDisplay}
+            routeFilter={routeFilterForMap}
             onVehicleClick={selectTrip}
             onStopClick={focusStopOnMap}
             highlightStopId={selectedStop?.id ?? searchHighlightStopId}

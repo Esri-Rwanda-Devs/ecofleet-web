@@ -32,6 +32,20 @@ export interface BusStop {
   scheduled_arrival_offset_seconds: number;
 }
 
+/**
+ * A stop as `/routing/stops` returns it — the whole geodatabase stop layer,
+ * with no route context, so there is no sequence or leg timing.
+ */
+export interface NetworkStop {
+  id: string;
+  objectid: number;
+  name: string;
+  stop_id: string;
+  latitude: number;
+  longitude: number;
+  speed_kmh: number | null;
+}
+
 export interface StopEta {
   stop_id: string;
   stop_name: string;

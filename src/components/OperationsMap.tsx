@@ -1,58 +1,19 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import {
-  BUS_LINE_VISUAL_LAYER_URL,
-  BUS_ROUTES_DEFINITION_EXPRESSION,
-  BUS_ROUTES_LAYER_URL,
-  BUS_STOPS_LAYER_URL,
-} from '../arcgis/constants';
 import type { ArcGisConfig, BusStop, TripTrackingState } from '../types';
 
 const ENV_ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN || '';
 
 /**
- * Bus_Lanes_BTS now lives under /Hosted/ on the portal, but the backend still
- * advertises the old root-level path, which 404s. Repair it here so the layer
- * draws; backend config still wins for every other service it points at.
+ * The map no longer takes Bus_Lanes_BTS layer URLs. That FeatureServer still
+ * publishes the retired STP-* stops and the pre-rebuild lines, so it disagrees
+ * with the geodatabase; the network now arrives over `setNetwork` instead. The
+ * token still goes through — the basemap and any other service need it.
  */
-function repairBuslaneUrl(url: string): string {
-  return url.replace(
-    '/rest/services/Bus_Lanes_BTS/',
-    '/rest/services/Hosted/Bus_Lanes_BTS/',
-  );
-}
-
 function buildMapUrl(config: ArcGisConfig): string {
   const params = new URLSearchParams();
   const token = config.arcgisToken || ENV_ARCGIS_TOKEN;
   if (token) params.set('token', token);
   if (config.portalUrl) params.set('portal', config.portalUrl);
-  // Network-wide FeatureLayers on the map only (selected trip still uses backend APIs).
-  const stopsUrl = repairBuslaneUrl(
-    config.buslane?.stopsLayerUrl ||
-      config.buslane?.busStopsUrl ||
-      BUS_STOPS_LAYER_URL,
-  );
-  const routesUrl = (
-    config.buslane?.routesLayerUrl ||
-    config.buslane?.busRoutesUrl ||
-    BUS_ROUTES_LAYER_URL
-  )
-    .split('/query')[0]
-    .replace(/\/$/, '');
-  params.set('stopsLayer', stopsUrl);
-  params.set('routesLayer', routesUrl);
-  params.set(
-    'routesWhere',
-    config.buslane?.routesWhere || BUS_ROUTES_DEFINITION_EXPRESSION,
-  );
-  // Cartographic bus-line layer, background context beneath everything else.
-  // Backend config can override it without a web redeploy.
-  params.set(
-    'visualLayer',
-    (config.buslane?.visualLayerUrl || BUS_LINE_VISUAL_LAYER_URL)
-      .split('/query')[0]
-      .replace(/\/$/, ''),
-  );
   const qs = params.toString();
   return qs ? `/operations-map.html?${qs}` : '/operations-map.html';
 }
@@ -60,10 +21,31 @@ function buildMapUrl(config: ArcGisConfig): string {
 interface OperationsMapProps {
   config: ArcGisConfig;
   tracking: TripTrackingState[];
+  /**
+   * The whole bus network from the geodatabase, drawn as blue background
+   * context. Replaces the Bus_Lanes_BTS feature layers, which still publish the
+   * retired stop set and the pre-rebuild lines.
+   */
+  network?: {
+    routes: { id: string; name: string; polyline: number[][] }[];
+    stops: { id: string; name: string; longitude: number; latitude: number }[];
+  };
   selectedRoute?: {
     polyline?: number[][];
     stops?: BusStop[];
     arcgisObjectId?: number;
+  };
+  /** Routes pinned by the route filter, drawn beneath the selected trip. */
+  routeFilter?: {
+    routes: {
+      id: string;
+      name: string;
+      color: string;
+      polyline?: number[][];
+      stops?: BusStop[];
+    }[];
+    /** Increment to re-fit the camera to the pinned set. */
+    fitKey: number;
   };
   onVehicleClick?: (tripId: string) => void;
   /** Fired when the user clicks a stop marker on the map. */
@@ -84,7 +66,9 @@ interface OperationsMapProps {
 export function OperationsMap({
   config,
   tracking,
+  network,
   selectedRoute,
+  routeFilter,
   onVehicleClick,
   onStopClick,
   highlightStopId,
@@ -96,15 +80,7 @@ export function OperationsMap({
   const [mapReady, setMapReady] = useState(false);
   const mapSrc = useMemo(
     () => buildMapUrl(config),
-    [
-      config.portalUrl,
-      config.arcgisToken,
-      config.buslane?.stopsLayerUrl,
-      config.buslane?.routesLayerUrl,
-      config.buslane?.routesWhere,
-      config.buslane?.busStopsUrl,
-      config.buslane?.busRoutesUrl,
-    ],
+    [config.portalUrl, config.arcgisToken],
   );
 
   useEffect(() => {
@@ -154,6 +130,15 @@ export function OperationsMap({
 
   useEffect(() => {
     if (!mapReady || !iframeRef.current?.contentWindow) return;
+    if (!network) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'setNetwork', routes: network.routes, stops: network.stops },
+      '*'
+    );
+  }, [mapReady, network]);
+
+  useEffect(() => {
+    if (!mapReady || !iframeRef.current?.contentWindow) return;
     iframeRef.current.contentWindow.postMessage(
       {
         type: 'setRoute',
@@ -163,6 +148,29 @@ export function OperationsMap({
       '*'
     );
   }, [mapReady, selectedRoute]);
+
+  useEffect(() => {
+    if (!mapReady || !iframeRef.current?.contentWindow) return;
+    iframeRef.current.contentWindow.postMessage(
+      {
+        type: 'setRouteFilter',
+        routes: (routeFilter?.routes ?? []).map((r) => ({
+          id: r.id,
+          name: r.name,
+          color: r.color,
+          polyline: r.polyline,
+          stops: (r.stops ?? []).map((s) => ({
+            id: s.id,
+            name: s.name,
+            longitude: s.longitude,
+            latitude: s.latitude,
+          })),
+        })),
+        fitKey: routeFilter?.fitKey ?? 0,
+      },
+      '*'
+    );
+  }, [mapReady, routeFilter]);
 
   useEffect(() => {
     if (!mapReady || !iframeRef.current?.contentWindow) return;

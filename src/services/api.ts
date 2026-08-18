@@ -1,6 +1,7 @@
 import type {
   ArcGisConfig,
   FleetOverview,
+  NetworkStop,
   Route,
   BusStop,
   RouteCalculation,
@@ -49,6 +50,14 @@ class ApiClient {
 
   getRoute(id: string) {
     return this.request<{ route: Route; stops: BusStop[] }>(`/api/routes/${id}`);
+  }
+
+  /**
+   * Every bus stop in the geodatabase, for the map's network layer.
+   * Returns a bare array, unlike the wrapped `/api/*` endpoints.
+   */
+  getNetworkStops() {
+    return this.request<NetworkStop[]>('/routing/stops');
   }
 
   calculateRoute(data: {
